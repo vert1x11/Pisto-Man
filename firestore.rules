@@ -1,0 +1,45 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function adminDoc() { return /databases/$(database)/documents/config/admin; }
+    function isAdmin() { return signedIn() && exists(adminDoc()) && get(adminDoc()).data.uid == request.auth.uid; }
+    function userDoc() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function isRep() { return signedIn() && exists(userDoc()) && get(userDoc()).data.rol == 'rep' && get(userDoc()).data.activo == true; }
+    function myLoc() { return get(userDoc()).data.loc; }
+
+    match /config/admin {
+      allow read: if signedIn();
+      allow create: if signedIn() && !exists(adminDoc()) && request.resource.data.uid == request.auth.uid;
+    }
+    match /users/{uid} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow write: if isAdmin();
+    }
+    match /productos/{id} { allow read, write: if isAdmin(); }
+    match /dias/{id} { allow read, write: if isAdmin(); }
+    match /promos/{id} {
+      allow read: if isAdmin() || isRep();
+      allow write: if isAdmin();
+    }
+    match /catalogoRep/{id} {
+      allow read: if isAdmin() || isRep();
+      allow write: if isAdmin();
+    }
+    match /ubicaciones/{id} {
+      allow read: if isAdmin() || (isRep() && myLoc() == id);
+      allow write: if isAdmin();
+    }
+    match /repVentas/{id} {
+      allow read: if isAdmin() || (isRep() && resource.data.rep == myLoc());
+      allow create: if isRep() && request.resource.data.rep == myLoc()
+                    && request.resource.data.absorbida == false
+                    && request.resource.data.borrada == false;
+      allow update, delete: if isAdmin();
+    }
+    match /repEntregas/{id} {
+      allow read: if isAdmin() || (isRep() && resource.data.rep == myLoc());
+      allow write: if isAdmin();
+    }
+  }
+}
