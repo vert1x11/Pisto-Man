@@ -51,7 +51,7 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box}
-body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased}
 body.locked{overflow:hidden}
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--surface)}
 button{font:inherit;color:inherit}
@@ -177,7 +177,7 @@ body.busy .pb2b{pointer-events:none}
 .chip.bad{background:var(--bad-soft);border-color:transparent;color:var(--bad)}
 .chip.warn{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
 .pill{display:inline-block;font-size:11px;font-weight:750;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:3px 8px;white-space:nowrap}
-.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)} .pill.neutral{background:var(--surface-2);color:var(--muted)}
+.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)} .pill.neutral{background:var(--surface-2);color:var(--muted)} .pill.propio{background:var(--warn-soft);color:var(--warn)}
 
 /* listas */
 .list{background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden}
@@ -450,6 +450,7 @@ function metaHoy(ventas,cobrado,aj){ const parts=['Se cobró '+fmt$(cobrado)]; c
 function ganaHtml(ventas){ const o={}; ventas.forEach(v=>{ if(v.debe!=null) o[v.vend]=(o[v.vend]||0)+ganaDe(v); }); const e=Object.entries(o); if(!e.length) return ''; return `<div class="lbl" style="margin-top:10px">Ganan repartidores</div>`+e.map(x=>`<div class="kv"><span>${esc(nombreVend(x[0]))}</span><b>${fmt$(x[1])}</b></div>`).join(''); }
 function cobroTxt(v){
   const rep=v.debe!=null, aj=Number(v.ajeno)>0; if(!rep && !aj) return '';
+  if(v.paraSi) return 'Botella para '+esc(v.vendNombre||nombreVend(v.vend))+' a precio especial · sin comisión · te debe '+fmt$(v.debe);
   const parts=['Se cobró '+fmt$(v.total)];
   if(rep){ const nm=esc(v.vendNombre||nombreVend(v.vend)); parts.push(nm+' gana '+fmt$(ganaDe(v))); parts.push('te debe '+fmt$(v.debe)); }
   if(aj) parts.push(ajenoTxt(v.ajenoDetalle));
@@ -577,7 +578,7 @@ async function absorber(x){
       tx.update(ref, {absorbida:true, absorbidaEn:FV.serverTimestamp()});
       hecho=v;
     });
-    if(hecho) toast('Llegó una venta de '+(hecho.vendNombre||'tu repartidor')+' · te debe '+fmt$(hecho.debe));
+    if(hecho) toast((hecho.paraSi?'Botella para ':'Llegó una venta de ')+(hecho.vendNombre||'tu repartidor')+' · te debe '+fmt$(hecho.debe));
   }catch(e){ console.warn('No se pudo pasar la venta del repartidor', e); }
   finally{ delete S.absorbiendo[x.id]; }
 }
@@ -915,7 +916,7 @@ function vHist(){
   const ventasHtml = ventas.length ? `<div class="list">${ventas.map(v=>{
     const conf = S.confirmar==='v:'+v.id;
     return `<div class="vrow">
-      <div class="vrow-top"><span class="pn">${esc(v.vendNombre||nombreVend(v.vend))}</span><span class="pill neutral">${v.modo==='mayoreo'?'Mayoreo':'Menudeo'}</span><span class="sub">${esc(horaDe(v.hora))}</span><span class="money">${fmt$(netoDe(v))}</span></div>
+      <div class="vrow-top"><span class="pn">${esc(v.vendNombre||nombreVend(v.vend))}</span>${v.paraSi?'<span class="pill propio">Para él</span>':`<span class="pill neutral">${v.modo==='mayoreo'?'Mayoreo':'Menudeo'}</span>`}<span class="sub">${esc(horaDe(v.hora))}</span><span class="money">${fmt$(netoDe(v))}</span></div>
       <div class="vlines">${lineasTxt(v)}</div>
       ${cobroTxt(v)?`<div class="sub">${cobroTxt(v)}</div>`:''}
       ${v.nota?`<div class="sub">${esc(v.nota)}</div>`:''}
@@ -1123,7 +1124,7 @@ function vCat(){
     }).join('')}</div>`;
   }).join('') : '<div class="empty"><span>Agrega tu primer producto.</span></div>';
   const promoHtml = ks.length ? `<div class="list">${ks.map(k=>`<div class="crow ${k.activo===false?'off':''}"><div class="grow"><span class="pn">${esc(k.nombre)}</span><span class="sub">${esc(compTxt(k))||'Sin productos'}${Number(k.ajeno)>0?' · '+fmt$(k.ajeno)+' para '+esc(k.ajenoDe||'tu amigo'):''}${k.activo===false?' · oculta':''}</span></div><span class="money" style="font-size:19px">${fmt$(k.precio)}</span><button class="btn small ghost" data-a="editk" data-id="${esc(k.id)}">Editar</button></div>`).join('')}</div>` : '<div class="empty"><span>Todavía no hay promos.</span></div>';
-  const ubicHtml = `<div class="list">${us.map(u=>`<div class="crow ${u.activo===false?'off':''}"><div class="grow"><span class="pn">${esc(u.nombre)}</span><span class="sub">${u.tipo==='bodega'?'Tú · vende desde bodega':'Repartidor'+(tieneAcuerdo(u)?' · '+esc(comResumen(u)):'')+(u.envioSuyo?' · se queda los envíos':'')}${u.activo===false?' · oculto':''}</span></div>${u.tipo==='rep'&&!tieneAcuerdo(u)?'<span class="pill warn">Faltan sus montos</span>':''}<button class="btn small ghost" data-a="editu" data-id="${esc(u.id)}">Editar</button></div>`).join('')}</div>`;
+  const ubicHtml = `<div class="list">${us.map(u=>`<div class="crow ${u.activo===false?'off':''}"><div class="grow"><span class="pn">${esc(u.nombre)}</span><span class="sub">${u.tipo==='bodega'?'Tú · vende desde bodega':'Repartidor'+(tieneAcuerdo(u)?' · '+esc(comResumen(u)):'')+(propioResumen(u)?' · '+esc(propioResumen(u)):'')+(u.envioSuyo?' · se queda los envíos':'')}${u.activo===false?' · oculto':''}</span></div>${u.tipo==='rep'&&!tieneAcuerdo(u)?'<span class="pill warn">Faltan sus montos</span>':''}<button class="btn small ghost" data-a="editu" data-id="${esc(u.id)}">Editar</button></div>`).join('')}</div>`;
   return `
   <section class="block"><h2 class="h2">Catálogo</h2><span class="sub">Precios, promos y quién vende. Lo que cambies aquí se usa en Vender e Inventario.</span></section>
   <section class="block"><div class="head-row"><h3 class="h3">Productos</h3><button class="btn small" data-a="editp" data-id="">Agregar producto</button></div>${prodHtml}</section>
@@ -1208,6 +1209,15 @@ function comisionEditor(u){
     <div class="lbl">Cuánto gana por cada pieza que vende</div>
     <span class="sub">${nm} te debe tu precio de menudeo menos lo que gana. Si vende más caro o más barato, la diferencia es de él. En las promos se suma lo de cada botella. Pon 0 en lo que es todo tuyo.</span>
     <div>${ps.map(p=>`<div class="mrow"><div class="grow"><span class="pn">${esc(nombreProd(p.id))}</span><span class="sub">${p.enVenta===false?'Solo en promos':'Menudeo '+fmt$(p.precio)}</span></div><div class="ins"><label>Gana<input id="u-c-${esc(p.id)}" inputmode="decimal" value="${ac?esc(com[p.id]||0):''}" placeholder="0"></label></div></div>`).join('')}</div>`;
+}
+/* botellas para él: precio especial cuando el repartidor toma una botella para sí mismo (sin comisión) */
+const propioResumen = u => { const e=Object.entries((u&&u.precioPropio)||{}).filter(x=>Number(x[1])>0); return e.length ? 'Para él: '+e.map(x=>nombreProd(x[0])+' '+fmt$(x[1])).join(' · ') : ''; };
+function propioEditor(u){
+  const pp=(u&&u.precioPropio)||{}, nm=u?esc(u.nombre):'el repartidor';
+  const ps=prodsActivos().filter(p=>!p.soloCaja && p.enVenta!==false);
+  return `<div class="lbl">Botellas para ${nm}</div>
+    <span class="sub">Precio especial cuando toma una botella para él. No gana comisión: todo se suma a lo que te debe. Deja vacío lo que no le dejas tomar.</span>
+    <div>${ps.map(p=>`<div class="mrow"><div class="grow"><span class="pn">${esc(nombreProd(p.id))}</span><span class="sub">Menudeo ${fmt$(p.precio)}</span></div><div class="ins"><label>Para él<input id="u-pp-${esc(p.id)}" inputmode="decimal" value="${Number(pp[p.id])>0?esc(pp[p.id]):''}" placeholder="—"></label></div></div>`).join('')}</div>`;
 }
 function sheetEntrega(s){
   const u=S.ubic[s.rep], saldo=Number(u&&u.saldo)||0, nm=esc(u?u.nombre:'');
@@ -1364,6 +1374,7 @@ function sheetUbic(s){
     <label class="field"><span class="lbl">Nombre</span><input id="u-nombre" value="${esc(u?u.nombre:'')}" placeholder="Ej. Toño"></label>
     ${u&&u.tipo==='bodega'?'':`<label class="check"><input type="checkbox" id="u-act" ${!u||u.activo!==false?'checked':''}> Activo (aparece en Vender e Inventario)</label>`}
     ${u&&u.tipo==='bodega'?'':comisionEditor(u)}
+    ${u&&u.tipo==='bodega'?'':propioEditor(u)}
     ${u&&u.tipo==='rep'?accesoHtml(u):''}
     <div class="sheet-actions"><button class="btn ghost" data-a="cerrar">Cancelar</button><button class="btn" data-a="guardaru">Guardar</button></div>`;
 }
@@ -1398,15 +1409,18 @@ async function guardarUbic(){
   const s=S.sheet, nombre=document.getElementById('u-nombre').value.trim();
   if(!nombre){ toast('Escribe el nombre.'); return; }
   const actEl=document.getElementById('u-act'), activo=actEl?actEl.checked:true;
-  const u=s.id?S.ubic[s.id]:null; let comision=null;
+  const u=s.id?S.ubic[s.id]:null; let comision=null, precioPropio=null;
   if(!u || u.tipo==='rep'){
     const c={}; let alguno=false;
     prodsActivos().filter(p=>!p.soloCaja).forEach(p=>{ const el=document.getElementById('u-c-'+p.id); if(!el) return; if(el.value.trim()!=='') alguno=true; c[p.id]=Math.max(0,num(el.value)); });
     if(alguno || tieneAcuerdo(u)) comision=c;
+    const pp={}; let algunPP=false;
+    prodsActivos().forEach(p=>{ const el=document.getElementById('u-pp-'+p.id); if(!el) return; const n=Math.max(0,num(el.value)); if(n>0) algunPP=true; pp[p.id]=n; });
+    if(algunPP || (u && u.precioPropio)) precioPropio=pp;
   }
   let ok;
-  if(s.id){ const patch={nombre, activo}; if(comision) patch.comision=comision; const envEl=document.getElementById('u-envio'); if(envEl) patch.envioSuyo=envEl.checked; ok=await intentar(()=>S.db.doc('ubicaciones/'+s.id).update(patch), 'Guardado.'); }
-  else { const id=uid('r'); const orden=Math.max(0,...Object.values(S.ubic).map(x=>Number(x.orden)||0))+1; const data={nombre, tipo:'rep', orden, activo:true, stock:{}, saldo:0}; if(comision) data.comision=comision; const envEl=document.getElementById('u-envio'); if(envEl) data.envioSuyo=envEl.checked; ok=await intentar(()=>S.db.doc('ubicaciones/'+id).set(data), 'Repartidor agregado.'); }
+  if(s.id){ const patch={nombre, activo}; if(comision) patch.comision=comision; if(precioPropio) patch.precioPropio=precioPropio; const envEl=document.getElementById('u-envio'); if(envEl) patch.envioSuyo=envEl.checked; ok=await intentar(()=>S.db.doc('ubicaciones/'+s.id).update(patch), 'Guardado.'); }
+  else { const id=uid('r'); const orden=Math.max(0,...Object.values(S.ubic).map(x=>Number(x.orden)||0))+1; const data={nombre, tipo:'rep', orden, activo:true, stock:{}, saldo:0}; if(comision) data.comision=comision; if(precioPropio) data.precioPropio=precioPropio; const envEl=document.getElementById('u-envio'); if(envEl) data.envioSuyo=envEl.checked; ok=await intentar(()=>S.db.doc('ubicaciones/'+id).set(data), 'Repartidor agregado.'); }
   if(ok) cerrarSheet();
 }
 

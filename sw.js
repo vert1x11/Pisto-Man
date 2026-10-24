@@ -1,6 +1,6 @@
 /* Pisto-Man: guarda la app en el celular para que abra aunque no haya señal.
    Los datos no pasan por aquí: Firebase los guarda en el celular y los sube solo. */
-const V = 'pm-v1';
+const V = 'pm-v2';
 const BASICOS = ['./', './index.html', './repartidor/', './repartidor/index.html', './pm-db.js', './firebase-config.js',
   './logo.webp', './manifest.webmanifest', './repartidor/manifest.webmanifest',
   './icons/icon-180.png', './icons/icon-192.png', './icons/rep-180.png', './icons/rep-192.png'];

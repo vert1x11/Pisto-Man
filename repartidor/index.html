@@ -53,13 +53,13 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box}
-body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased}
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--surface)}
 button{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
 .top{position:sticky;top:env(safe-area-inset-top,0px);z-index:9;background:var(--surface);border-bottom:1px solid var(--line)}
-.top-in,.top-in{padding-block:10px;display:flex;align-items:center;gap:11px}
+.top-in{max-width:620px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:10px;display:flex;align-items:center;gap:11px}
 .mark{width:46px;height:46px;border-radius:50%;background:var(--surface-2);border:2px solid var(--accent);flex:none;overflow:hidden;display:block}
 .mark img{width:100%;height:100%;object-fit:cover;display:block}
 .brand{display:flex;flex-direction:column;line-height:1.05;min-width:0}
@@ -174,6 +174,11 @@ button{font:inherit;color:inherit}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(78px + env(safe-area-inset-bottom,0px));z-index:60;background:var(--ink);color:var(--surface);padding:11px 16px;border-radius:12px;font-weight:650;max-width:calc(100% - 32px);box-shadow:var(--shadow);font-size:14px}
 @media (max-width:360px){ .stats,.split2{grid-template-columns:1fr} }
 @media (prefers-reduced-motion:reduce){ .pbtn:active{transform:none} }
+.seg2{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:4px}
+.segb{appearance:none;border:0;background:none;border-radius:10px;min-height:42px;font-weight:700;color:var(--muted);cursor:pointer}
+.segb.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+.step input[readonly]{pointer-events:none}
+.pill.propio{background:var(--accent-soft);color:var(--accent)}
 [hidden]{display:none!important}
 body.sin-sesion .tabs{display:none}
 .login{display:flex;flex-direction:column;gap:14px;max-width:420px}
@@ -223,7 +228,7 @@ const suma=(arr,f)=>arr.reduce((s,x)=>s+(Number(f(x))||0),0);
 const r2=n=>Math.round((Number(n)||0)*100)/100;
 
 /* ---------- estado ---------- */
-const S={tab:'inicio', hoy:hoyStr(), dia:hoyStr(), venta:{lineas:[], envio:0, nota:''},
+const S={tab:'inicio', hoy:hoyStr(), dia:hoyStr(), venta:{lineas:[], envio:0, nota:''}, modo:'cliente', propio:{lineas:[]},
   estado:'cargando', user:null, me:null, loc:null, ubic:null, cat:{}, promos:{}, ventas:[], entregas:[],
   cargado:{ubic:false,cat:false,promos:false,ventas:false}, loginErr:'', loginEmail:'', ocupado:false};
 try{ const t=localStorage.getItem('pm-rep-tab'); if(['inicio','vender','traigo','dias'].includes(t)) S.tab=t; }catch(e){}
@@ -240,6 +245,9 @@ const promo=id=>S.promos[id]?Object.assign({id},S.promos[id]):null;
 const nombreProd=id=>{ const p=prod(id); return p ? p.nombre+(p.presentacion?' '+p.presentacion:'') : '—'; };
 function unidad(p,n){ const c=p&&p.categoria; if(c==='tequila') return plural(n,'botella','botellas'); if(c==='refresco') return plural(n,'refresco','refrescos'); return plural(n,'pieza','piezas'); }
 const comDe=pid=>Number(S.ubic&&S.ubic.comision&&S.ubic.comision[pid])||0;
+/* botellas para él: precio especial que le pone el jefe (sin comisión, todo se suma a lo que debe) */
+const precioPropio=pid=>Number(S.ubic&&S.ubic.precioPropio&&S.ubic.precioPropio[pid])||0;
+const prodsPropios=()=>prodsActivos().filter(p=>precioPropio(p.id)>0);
 const compTxt=k=>Object.entries(k.items||{}).filter(e=>Number(e[1])>0).map(e=>e[1]+' '+nombreProd(e[0])).concat(Object.entries(k.regalo||{}).filter(e=>Number(e[1])>0).map(e=>e[1]+' '+nombreProd(e[0])+' de regalo')).join(' + ');
 const comPromo=k=>Object.entries(k.items||{}).reduce((s,e)=>s+Math.round(Number(e[1])||0)*comDe(e[0]),0);
 const nombreLinea=l=>l.t==='k' ? ((promo(l.id)||{}).nombre||'Promo') : l.t==='r' ? nombreProd(l.id)+' de regalo' : nombreProd(l.id);
@@ -322,20 +330,20 @@ function vSinAcceso(){
 }
 function filaVenta(v){
   return `<div class="vrow">
-    <div class="vrow-top"><span class="sub">${esc(horaDe(v.hora))}</span>${v._sinSubir?'<span class="pill warn">Sin subir</span>':''}${v._origen==='dueno'?`<span class="pill ok">La anotó ${esc(JEFE())}</span>`:''}<span class="money">${fmt$(v.total)}</span></div>
+    <div class="vrow-top"><span class="sub">${esc(horaDe(v.hora))}</span>${v.paraSi?'<span class="pill propio">Para ti</span>':''}${v._sinSubir?'<span class="pill warn">Sin subir</span>':''}${v._origen==='dueno'?`<span class="pill ok">La anotó ${esc(JEFE())}</span>`:''}<span class="money">${fmt$(v.total)}</span></div>
     <div class="vlines">${(v.lineas||[]).map(l=>`${l.cant}× ${esc(l.nombre)} <span class="sub">(${fmt$(l.precio)})</span>`).join(' · ')}${Number(v.envio)?` · Envío <span class="sub">(${fmt$(v.envio)})</span>`:''}</div>
-    <div class="vmeta"><span class="gn">Ganaste ${fmt$(v.gana)}</span><span class="sub">Le debes ${fmt$(v.debe)}</span></div>
+    <div class="vmeta">${v.paraSi?`<span class="sub">Precio especial · se suma a lo que le debes: ${fmt$(v.debe)}</span>`:`<span class="gn">Ganaste ${fmt$(v.gana)}</span><span class="sub">Le debes ${fmt$(v.debe)}</span>`}</div>
     ${v.nota?`<div class="sub">${esc(v.nota)}</div>`:''}
   </div>`;
 }
 function vInicio(){
-  const vs=ventasDe(S.hoy), sal=saldo(), J=esc(JEFE());
+  const todas=ventasDe(S.hoy), vs=todas.filter(v=>!v.paraSi), mias=todas.filter(v=>v.paraSi), sal=saldo(), J=esc(JEFE());
   const gana=suma(vs,v=>v.gana), env=suma(vs,v=>v.envio), cob=suma(vs,v=>v.total);
-  const debeHoy=suma(vs,v=>v.debe), dioHoy=suma(entregasDe(S.hoy),e=>e.monto), antes=sal-debeHoy+dioHoy;
+  const debeVentas=suma(vs,v=>v.debe), debeMias=suma(mias,v=>v.debe), debeHoy=debeVentas+debeMias, dioHoy=suma(entregasDe(S.hoy),e=>e.monto), antes=sal-debeHoy+dioHoy;
   const ult=S.entregas.slice().sort(porHora)[0];
   const ps=prodsActivos().filter(p=>stock(p.id)!==0 || p.enVenta!==false && !p.soloCaja);
   const chips=ps.map(p=>{ const n=stock(p.id); return `<span class="chip ${n<=0?'bad':''}"><b>${n}</b>${esc(nombreProd(p.id))}</span>`; }).join('');
-  const lista = vs.length ? `<div class="list">${vs.slice(0,3).map(filaVenta).join('')}</div>` : `<div class="empty"><span>Todavía no registras ventas hoy. Toca <b>Registrar venta</b> cuando vendas algo.</span></div>`;
+  const lista = todas.length ? `<div class="list">${todas.slice(0,3).map(filaVenta).join('')}</div>` : `<div class="empty"><span>Todavía no registras ventas hoy. Toca <b>Registrar venta</b> cuando vendas algo.</span></div>`;
   return `
   <section class="hero" aria-label="Lo que le debes a ${J}">
     <span class="lbl">${sal>=0?'Le debes a '+J:'Tienes a tu favor'}</span>
@@ -343,7 +351,8 @@ function vInicio(){
     <span class="meta">${sal>=0?'Es el dinero de tus ventas que todavía no le das.':'Le diste más de lo que le debías.'}</span>
     <div class="cuenta">
       <div><span>Te faltaba de antes</span><b>${fmt$(antes)}</b></div>
-      <div><span>+ De tus ventas de hoy</span><b>${fmt$(debeHoy)}</b></div>
+      <div><span>+ De tus ventas de hoy</span><b>${fmt$(debeVentas)}</b></div>
+      ${debeMias?`<div><span>+ Tus botellas de hoy</span><b>${fmt$(debeMias)}</b></div>`:''}
       <div><span>− Le diste hoy</span><b>${fmt$(dioHoy)}</b></div>
     </div>
     ${ult?`<span class="meta">La última vez que le diste dinero fue el ${esc(diaLargo(ult.dia))}: ${fmt$(ult.monto)}.</span>`:''}
@@ -353,8 +362,9 @@ function vInicio(){
     <div class="stat"><span class="lbl">Cobraste hoy</span><b>${fmt$(cob)}</b><span class="sub">${vs.length} ${plural(vs.length,'venta','ventas')}</span></div>
   </div>
   <button class="btn block" data-a="tab" data-t="vender">Registrar venta</button>
+  ${prodsPropios().length?'<button class="btn block ghost" data-a="propio">Botella para mí</button>':''}
   <section class="block"><div class="head-row"><span class="lbl">Lo que traes</span><button class="linkbtn" data-a="tab" data-t="traigo">Ver detalle</button></div><div class="chips">${chips||'<span class="sub">No traes mercancía.</span>'}</div></section>
-  <section class="block"><div class="head-row"><span class="lbl">Tus ventas de hoy</span>${vs.length>3?'<button class="linkbtn" data-a="tab" data-t="dias">Ver todas</button>':''}</div>${lista}</section>
+  <section class="block"><div class="head-row"><span class="lbl">Tus ventas de hoy</span>${todas.length>3?'<button class="linkbtn" data-a="tab" data-t="dias">Ver todas</button>':''}</div>${lista}</section>
   <div class="head-row"><span class="sub">Entraste como ${esc((S.user&&S.user.email)||'')}</span><button class="linkbtn" data-a="salir">Cerrar sesión</button></div>`;
 }
 function ganaTxt(l){
@@ -364,7 +374,63 @@ function ganaTxt(l){
   return g>=0 ? {cls:'gn', txt:'Ganas '+fmt$(g)} : {cls:'warnc', txt:'Pierdes '+fmt$(-g)+' por cobrar menos'};
 }
 function avisoHtml(f){ return f.length ? `<div class="aviso">No te alcanza lo que traes:<ul>${f.map(x=>`<li>${esc(nombreProd(x.pid))}: pides ${x.pide}, traes ${x.hay}</li>`).join('')}</ul>Puedes guardarla igual y ${esc(JEFE())} lo revisa.</div>` : ''; }
+function modoHtml(){
+  if(!prodsPropios().length) return '';
+  return `<div class="seg2" role="group" aria-label="Para quién es"><button class="segb ${S.modo!=='propio'?'on':''}" data-a="modo" data-m="cliente" aria-pressed="${S.modo!=='propio'}">A un cliente</button><button class="segb ${S.modo==='propio'?'on':''}" data-a="modo" data-m="propio" aria-pressed="${S.modo==='propio'}">Para mí</button></div>`;
+}
+function vPropio(){
+  const J=esc(JEFE()), ls=S.propio.lineas;
+  const cards=prodsPropios().map(p=>{ const n=stock(p.id);
+    return `<button class="pbtn" data-a="addpropio" data-id="${esc(p.id)}"><span class="pn">${esc(p.nombre)}</span><span class="q">${esc(p.presentacion||'')}</span><span class="q ${n<=0?'bad':''}">${n<=0?'No traes':'Traes '+n}</span><span class="q">Precio para ti</span><span class="pr">${fmt$(precioPropio(p.id))}</span></button>`; }).join('');
+  const tot=suma(ls,l=>l.cant*precioPropio(l.id)), pz={}; ls.forEach(l=>{ pz[l.id]=(pz[l.id]||0)+l.cant; });
+  const falt=faltantes(pz);
+  const ticket = ls.length ? `
+  <section class="ticket" aria-label="Botellas para ti">
+    <div class="head-row"><span class="lbl">Para ti</span><button class="linkbtn" data-a="plimpiar">Vaciar</button></div>
+    ${ls.map((l,i)=>`<div class="tl">
+      <div class="tl-name">${esc(nombreProd(l.id))}<span class="sub">${fmt$(precioPropio(l.id))} cada una · precio que te deja ${J}</span></div>
+      <button class="x" data-a="pquitar" data-i="${i}" aria-label="Quitar">×</button>
+      <div class="tl-ctrls">
+        <div class="step"><button data-a="pmenos" data-i="${i}" aria-label="Una menos">−</button><input value="${l.cant}" readonly aria-label="Cantidad"><button data-a="pmas" data-i="${i}" aria-label="Una más">+</button></div>
+        <span class="tl-sub">${fmt$(l.cant*precioPropio(l.id))}</span>
+      </div>
+    </div>`).join('')}
+    <div class="total-row"><span class="lbl">Se suma a lo que le debes</span><span class="money">${fmt$(tot)}</span></div>
+    <span class="sub">En tus botellas no ganas comisión. Con esta le deberías a ${J} ${fmt$(saldo()+tot)} en total.</span>
+    ${avisoHtml(falt)}
+    <button class="btn block" data-a="pguardar">${falt.length?'Guardar aunque falte':'Guardar para mí'}</button>
+  </section>` : `<div class="empty"><span>Toca la botella que vas a tomar. Se resta de lo que traes y se suma a lo que le debes a ${J}.</span></div>`;
+  return `${modoHtml()}
+  <section class="block"><h2 class="h2">Botella para mí</h2><span class="sub">Cuando tomas una botella para ti, ${J} te la deja en precio especial. No se la cobras a nadie: la pagas tú.</span></section>
+  ${ticket}
+  <section class="block"><div class="lbl">Lo que puedes tomar</div><div class="pgrid">${cards}</div></section>`;
+}
+function agregarPropio(id){
+  const ex=S.propio.lineas.find(l=>l.id===id);
+  if(ex) ex.cant++; else S.propio.lineas.push({id, cant:1});
+  render();
+}
+async function guardarPropio(){
+  if(S.ocupado) return;
+  const ls=S.propio.lineas.filter(l=>l.cant>0 && precioPropio(l.id)>0);
+  if(!ls.length){ toast('Toca la botella que vas a tomar.'); return; }
+  const lineas=ls.map(l=>{ const pr=precioPropio(l.id); return {t:'p', id:l.id, cant:l.cant, precio:pr, nombre:nombreProd(l.id), lista:pr, com:0, ingreso:r2(l.cant*pr), propio:true}; });
+  const piezas={}; lineas.forEach(l=>{ piezas[l.id]=(piezas[l.id]||0)+l.cant; });
+  const cambios={[S.loc]:{}}; for(const pid in piezas) cambios[S.loc][pid]=-piezas[pid];
+  const tot=r2(suma(lineas,l=>l.ingreso)), ahora=new Date(), id=uid('v'), dia=hoyStr(ahora), nm=(S.ubic&&S.ubic.nombre)||'';
+  const venta={id, dia, hora:ahora.toISOString(), vend:S.loc, vendNombre:nm, modo:'menudeo', paraSi:true, lineas, total:tot, envio:0, envioTuyo:0,
+    ajeno:0, ajenoDetalle:{}, piezas, regalos:{}, cambios, nota:'', debe:tot, gana:0, envioSuyo:envioSuyo()};
+  S.ocupado=true;
+  try{
+    await PM.db.doc('repVentas/'+id).set({id, rep:S.loc, dia, hora:venta.hora, venta, absorbida:false, borrada:false, origen:'repartidor'});
+    S.propio={lineas:[]}; S.modo='cliente';
+    irTab('inicio');
+    toast('Listo · Se sumaron '+fmt$(tot)+' a lo que le debes a '+JEFE()+(navigator.onLine?'':' · se sube cuando haya señal'));
+  }catch(e){ toast('No se guardó: '+PM.mensajeError(e)); }
+  finally{ S.ocupado=false; }
+}
 function vVender(){
+  if(S.modo==='propio' && prodsPropios().length) return vPropio();
   const v=S.venta, c=calc(v.lineas, v.envio), falt=faltantes(piezasDe(v.lineas)), J=esc(JEFE());
   const promos=promosActivas().map(k=>`<button class="pbtn promo" data-a="addk" data-id="${esc(k.id)}"><span class="pn">${esc(k.nombre)}</span><span class="q">${esc(compTxt(k))}</span><span class="gn">${comPromo(k)?'Ganas '+fmt$(comPromo(k)):'Sin comisión'}</span><span class="pr">${fmt$(k.precio)}</span></button>`).join('');
   const prods=prodsVenta().map(p=>{ const n=stock(p.id), cm=comDe(p.id);
@@ -402,7 +468,7 @@ function vVender(){
     <div id="t-aviso">${avisoHtml(falt)}</div>
     <button class="btn block" id="t-guardar" data-a="guardar">${falt.length?'Guardar aunque falte':'Guardar venta'}</button>
   </section>` : `<div class="empty"><span>Toca una promo o un producto para agregarlo. Se resta solo de lo que traes.</span></div>`;
-  return `
+  return `${modoHtml()}
   <section class="block"><h2 class="h2">Registrar venta</h2><span class="sub">Puedes cambiar el precio si al cliente le cobraste otro. Si cobras más, la diferencia es tuya. Si cobras menos, sale de tu ganancia.</span></section>
   ${ticket}
   ${promos?`<section class="block"><div class="lbl">Promos</div><div class="pgrid">${promos}</div></section>`:''}
@@ -461,8 +527,8 @@ function vTraigo(){
   <div class="empty"><span>¿Algo no cuadra con lo que traes? Avísale a ${esc(JEFE())} para que lo corrija.</span></div>`;
 }
 function vDias(){
-  const d=S.dia, vs=ventasDe(d), es=entregasDe(d), J=esc(JEFE());
-  const cob=suma(vs,v=>v.total), gana=suma(vs,v=>v.gana), env=suma(vs,v=>v.envio), debe=suma(vs,v=>v.debe), ent=suma(es,e=>e.monto);
+  const d=S.dia, vs=ventasDe(d), es=entregasDe(d), J=esc(JEFE()), cli=vs.filter(v=>!v.paraSi), mias=vs.filter(v=>v.paraSi);
+  const cob=suma(cli,v=>v.total), gana=suma(cli,v=>v.gana), env=suma(cli,v=>v.envio), debe=suma(vs,v=>v.debe), ent=suma(es,e=>e.monto), propio=suma(mias,v=>v.debe);
   const entHtml = es.length ? `<section class="block"><div class="lbl">Dinero que le entregaste a ${J}</div><div class="list">${es.map(e=>`<div class="vrow"><div class="vrow-top"><span class="pn">Entrega</span><span class="sub">${esc(horaDe(e.hora))}</span><span class="money">${fmt$(e.monto)}</span></div>${e.nota?`<div class="sub">${esc(e.nota)}</div>`:''}</div>`).join('')}</div></section>` : '';
   return `
   <section class="block">
@@ -473,7 +539,7 @@ function vDias(){
   <section class="card"><div class="totals">
     <div><span class="lbl">Cobraste</span><b>${fmt$(cob)}</b></div>
     <div><span class="lbl">Ganaste</span><b class="okc">${fmt$(gana)}</b>${env&&envioSuyo()?`<span class="sub">con ${fmt$(env)} de envíos</span>`:''}</div>
-    <div><span class="lbl">De este día le debes</span><b>${fmt$(debe)}</b></div>
+    <div><span class="lbl">De este día le debes</span><b>${fmt$(debe)}</b>${propio?`<span class="sub">con ${fmt$(propio)} de tus botellas</span>`:''}</div>
     ${ent?`<div><span class="lbl">Le entregaste</span><b>${fmt$(ent)}</b></div>`:''}
   </div></section>
   <section class="block"><div class="lbl">Ventas (${vs.length})</div>${vs.length?`<div class="list">${vs.map(filaVenta).join('')}</div>`:'<div class="empty"><span>No hay ventas este día.</span></div>'}</section>
@@ -524,7 +590,7 @@ function pedirRender(){ if(enInput()){ pendiente=true; return; } render(); }
 view.addEventListener('focusout', ()=>{ setTimeout(()=>{ if(pendiente && !enInput()){ pendiente=false; render(); } },0); });
 function irTab(t){ S.tab=t; try{ localStorage.setItem('pm-rep-tab',t); }catch(e){} render(); window.scrollTo({top:0}); }
 const A={
-  tab:d=>irTab(d.t),
+  tab:d=>{ if(d.t==='vender') S.modo='cliente'; irTab(d.t); },
   addp:d=>agregar('p',d.id),
   addk:d=>agregar('k',d.id),
   regalo:d=>agregar('r',d.id),
@@ -533,6 +599,14 @@ const A={
   quitar:d=>{ S.venta.lineas.splice(+d.i,1); render(); },
   limpiar:()=>{ S.venta={lineas:[], envio:0, nota:''}; render(); },
   guardar:()=>guardarVenta(),
+  modo:d=>{ S.modo=d.m==='propio'?'propio':'cliente'; render(); window.scrollTo({top:0}); },
+  propio:()=>{ S.modo='propio'; irTab('vender'); },
+  addpropio:d=>agregarPropio(d.id),
+  pmas:d=>{ const l=S.propio.lineas[+d.i]; if(l){ l.cant++; render(); } },
+  pmenos:d=>{ const l=S.propio.lineas[+d.i]; if(l){ l.cant--; if(l.cant<=0) S.propio.lineas.splice(+d.i,1); render(); } },
+  pquitar:d=>{ S.propio.lineas.splice(+d.i,1); render(); },
+  plimpiar:()=>{ S.propio={lineas:[]}; render(); },
+  pguardar:()=>guardarPropio(),
   dprev:()=>{ S.dia=addDias(S.dia,-1); render(); },
   dnext:()=>{ if(S.dia<S.hoy){ S.dia=addDias(S.dia,1); render(); } },
   dhoy:()=>{ S.dia=S.hoy; render(); },
@@ -541,7 +615,7 @@ const A={
   salir:()=>{ parar(); S.estado='login'; render(); PM.auth.signOut(); }
 };
 document.addEventListener('click', e=>{
-  const tb=e.target.closest('[data-tab]'); if(tb){ irTab(tb.dataset.tab); return; }
+  const tb=e.target.closest('[data-tab]'); if(tb){ if(tb.dataset.tab==='vender') S.modo='cliente'; irTab(tb.dataset.tab); return; }
   const b=e.target.closest('[data-a]'); if(!b) return;
   const f=A[b.dataset.a]; if(f){ e.preventDefault(); f(b.dataset); }
 });
