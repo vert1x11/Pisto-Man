@@ -87,6 +87,7 @@ button{font:inherit;color:inherit}
 .hero .lbl{color:inherit;opacity:.8}
 .hero .amt{font-family:var(--f-display);font-stretch:72%;font-weight:850;font-size:48px;line-height:1;font-variant-numeric:tabular-nums}
 .hero .meta{font-size:14px;opacity:.9}
+.hero .hsep{border-top:1.5px dashed currentColor;opacity:.35;margin:10px 0 8px}
 
 /* botones */
 .btn{appearance:none;border:0;border-radius:12px;background:var(--agave);color:var(--agave-ink);font-weight:700;padding:11px 16px;min-height:46px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-align:center}
@@ -1050,6 +1051,8 @@ function vGan(){
   const gas=gastos.reduce((s,g)=>s+(Number(g.monto)||0),0), neta=gan-gas;
   const inv=compras.reduce((s,m)=>s+(Number(m.costo)||0),0);
   const entro=ventas.reduce((s,v)=>s+netoDe(v),0), salio=inv+gas, efectivo=entro-salio;
+  const cobrado=ventas.reduce((s,v)=>s+(Number(v.total)||0),0), ajenoTot=ventas.reduce((s,v)=>s+(Number(v.ajeno)||0),0);
+  const difVenta=Math.round(cobrado-entro);
   const cap1=s=>String(s).charAt(0).toUpperCase()+String(s).slice(1);
   const porCon={}; gastos.forEach(g=>{ const c=g.concepto||'Otro'; porCon[c]=(porCon[c]||0)+(Number(g.monto)||0); });
   const conEnt=Object.entries(porCon).sort((a,b)=>b[1]-a[1]), maxCon=conEnt.length?conEnt[0][1]:1;
@@ -1061,7 +1064,7 @@ function vGan(){
   if(S.gPer==='anio' || S.gPer==='anioant'){
     const M={}, mk=k=>M[k]||(M[k]={cob:0,gan:0,gas:0,inv:0,n:0});
     S.gDocs.forEach(doc=>{ const m=mk(String(doc.dia).slice(0,7));
-      lista(doc.ventas).forEach(v=>{ m.n++; m.cob+=Number(v.total)||0; m.gan+=ganDe(v); });
+      lista(doc.ventas).forEach(v=>{ m.n++; m.cob+=netoDe(v); m.gan+=ganDe(v); });
       lista(doc.gastos).forEach(g=>{ m.gas+=Number(g.monto)||0; });
       lista(doc.movs).forEach(x=>{ if(x.tipo==='entrada') m.inv+=Number(x.costo)||0; }); });
     const ks=Object.keys(M).filter(k=>M[k].n||M[k].gas||M[k].inv).sort();
@@ -1082,11 +1085,15 @@ function vGan(){
   const fila=(nom,det,ing,cos,g)=>`<div class="irow"><div class="grow"><span class="pn">${nom}</span><span class="sub">${det}</span><span class="sub">Te tocó ${fmt$(ing)}${cos!=null?' · la mercancía te costó '+fmt$(cos):''}</span></div><div class="right"><span class="bign ${g<0?'badc':''}">${fmt$(g)}</span><span class="sub">ganaste</span></div></div>`;
   const comprasHtml = compras.length ? `<section class="block"><div class="lbl">Mercancía que compraste</div><div class="list">${compras.sort(porFecha).map(m=>`<div class="vrow"><div class="vrow-top"><span class="pn">${esc(diaCorto(m.dia))}</span>${m.soloInversion?'<span class="pill neutral">Solo inversión</span>':''}<span class="money">${fmt$(m.costo)}</span></div><div class="vlines">${Object.entries(m.piezas||{}).map(e=>{ const ct=cajasTxt(e[1],S.prods[e[0]]); return `${e[1]} ${esc(nombreProd(e[0]))}${ct?' <span class="sub">('+esc(ct)+')</span>':''}`; }).join(' · ')}</div>${m.nota?`<div class="sub">${esc(m.nota)}</div>`:''}</div>`).join('')}</div></section>` : '';
   return `${head}
-  <section class="hero" aria-label="Ganancia neta">
+  <section class="hero" aria-label="Venta total y ganancia neta">
+    <span class="lbl">Venta total · ${esc(nombre)}</span>
+    <span class="amt">${fmt$(entro)}</span>
+    <span class="meta">${ventas.length} ${plural(ventas.length,'venta','ventas')} ${esc(frase)}.${difVenta>0?` Es lo que te tocó a ti: los clientes pagaron <b>${fmt$(cobrado)}</b>, contando lo que ganan tus repartidores${ajenoTot>0?' y la parte de tu amigo':''}.`:''}</span>
+    <div class="hsep"></div>
     <span class="lbl">Ganancia neta · ${esc(nombre)}</span>
     <span class="amt">${neta<0?'−':''}${fmt$(Math.abs(neta))}</span>
     <span class="meta">Ganancia de tus ventas <b>${fmt$(gan)}</b>${gas?` − gastos <b>${fmt$(gas)}</b>`:''}</span>
-    <span class="meta">Lo que te queda después de pagar la mercancía${gas?' y tus gastos':''}. Ya no incluye lo que ganan tus repartidores ni la parte de tu amigo. ${ventas.length} ${plural(ventas.length,'venta','ventas')} ${esc(frase)}.</span>
+    <span class="meta">Lo que te queda después de pagar la mercancía${gas?' y tus gastos':''}.</span>
   </section>
   ${aviso}
   ${mesesHtml}
