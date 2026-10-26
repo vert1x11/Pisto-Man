@@ -227,6 +227,10 @@ table.inv{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;
 .kv{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}
 .kv:last-child{border-bottom:0}
 .kv b{font-variant-numeric:tabular-nums}
+.stack{display:flex;flex-direction:column;gap:14px}
+.vcuenta{background:var(--surface-2);border-radius:12px;padding:8px 12px 10px;display:flex;flex-direction:column}
+.vcuenta .kv.tot{border-bottom:0;border-top:1.5px solid var(--ink);margin-top:2px;padding-top:8px;font-size:16px;font-weight:800}
+.vcuenta .sub{margin-top:4px}
 
 /* catálogo */
 .crow{display:flex;gap:12px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
@@ -340,7 +344,7 @@ const S = {
   prods:{}, promos:{}, ubic:{}, cargado:{prods:false,promos:false,ubic:false,cat:false},
   hoy:hoyStr(), diaHoy:null, histDia:hoyStr(), diaHist:null,
   tab:'hoy', invLoc:'todo', histVend:'todos', confirmar:null, mes:null, gPer:'mes', gDocs:null, gKey:null,
-  venta:{vend:'bodega', modo:'menudeo', dia:hoyStr(), lineas:[], nota:'', envio:0},
+  venta:{vend:'bodega', modo:'menudeo', dia:hoyStr(), lineas:[], nota:'', envio:0, viaje:0, cobro:'rep'},
   sheet:null, pendiente:false
 };
 try{ const t=localStorage.getItem('pm-tab'); if(t && ['hoy','vender','inv','gan','hist','cat'].includes(t)) S.tab=t; }catch(e){}
@@ -385,8 +389,11 @@ function ajenoDe(lineas){
   }
   return {tot,det};
 }
-const netoDe = v => (v.debe!=null ? (Number(v.debe)||0) : (Number(v.total)||0)) - (Number(v.ajeno)||0);
-const ganaDe = v => v.debe!=null ? (Number(v.total)||0) - (Number(v.debe)||0) : 0;
+/* repartidor que cobra por viaje (Yahir): no gana comisión; en cada venta se anota el viaje y el envío que paga el cliente (todo el envío es de él) */
+const pagaViaje = u => !!(u && u.pago==='viaje');
+const esViaje = v => !!(v && v.pagoRep==='viaje');
+const netoDe = v => esViaje(v) ? (Number(v.total)||0)-(Number(v.envio)||0)-(Number(v.ajeno)||0) : (v.debe!=null ? (Number(v.debe)||0) : (Number(v.total)||0)) - (Number(v.ajeno)||0);
+const ganaDe = v => esViaje(v) ? (Number(v.viaje)||0)+(Number(v.envio)||0) : v.debe!=null ? (Number(v.total)||0) - (Number(v.debe)||0) : 0;
 const esRep = id => !!(S.ubic[id] && S.ubic[id].tipo==='rep');
 const tieneAcuerdo = u => !!(u && u.comision && typeof u.comision==='object');
 const comDe = (rep,pid) => { const u=S.ubic[rep]; return Number(u && u.comision && u.comision[pid]) || 0; };
@@ -407,10 +414,16 @@ async function ajustarSaldo(rep, delta){
   if(!delta || !S.ubic[rep]) return;
   await S.db.doc('ubicaciones/'+rep).update({saldo: S.db.inc(Math.round(delta*100)/100)});
 }
-function calcVenta(vend, lineas, envio){
+function calcVenta(vend, lineas, envio, viaje, cobro){
   envio=Math.max(0, Number(envio)||0);
   const prod=lineas.reduce((s,l)=>s+(Number(l.cant)||0)*(Number(l.precio)||0),0), total=prod+envio;
   if(!esRep(vend)) return {rep:false, prod, envio, total};
+  if(pagaViaje(S.ubic[vend])){
+    const vj=Math.max(0, Number(viaje)||0), quien=cobro==='dueno'?'dueno':'rep';
+    /* si cobró él: te debe los productos menos el viaje (el envío se lo queda). Si te pagaron a ti: le debes el viaje y el envío */
+    const debe = quien==='rep' ? prod-vj : -(envio+vj);
+    return {rep:true, porViaje:true, prod, envio, total, viaje:vj, cobro:quien, debe, gana:envio+vj, envioSuyo:true, det:lineas.map(l=>({lista:Number(l.precio)||0, com:0}))};
+  }
   const r=calcRep(vend, lineas), suyo=!!(S.ubic[vend] && S.ubic[vend].envioSuyo);
   const debe=r.debe+(suyo?0:envio);
   return {rep:true, prod, envio, total, debe, gana:total-debe, det:r.det, envioSuyo:suyo};
@@ -421,7 +434,7 @@ function envioHint(vend){
   const deQuien = esRep(vend) ? (u.envioSuyo ? 'El envío es de '+esc(u.nombre)+', no te lo debe.' : 'El envío es tuyo, se suma a lo que te debe.') : 'El envío es tuyo.';
   return esTarde() ? `<span class="warnc">Ya pasan de las 10 de la noche: ¿se cobró envío?</span> ${deQuien}` : deQuien+' Se cobra después de las 10 de la noche.';
 }
-function enviosHtml(ventas){ const o={}; ventas.forEach(v=>{ const e=Number(v.envio)||0; if(e>0) o[v.vend]=(o[v.vend]||0)+e; }); const e=Object.entries(o); if(!e.length) return ''; return `<div class="lbl" style="margin-top:10px">Envíos cobrados</div>`+e.map(x=>`<div class="kv"><span>${esc(nombreVend(x[0]))}${esRep(x[0])&&S.ubic[x[0]].envioSuyo?' <span class="sub">(son de él)</span>':''}</span><b>${fmt$(x[1])}</b></div>`).join(''); }
+function enviosHtml(ventas){ const o={}; ventas.forEach(v=>{ const e=Number(v.envio)||0; if(e>0) o[v.vend]=(o[v.vend]||0)+e; }); const e=Object.entries(o); if(!e.length) return ''; return `<div class="lbl" style="margin-top:10px">Envíos cobrados</div>`+e.map(x=>`<div class="kv"><span>${esc(nombreVend(x[0]))}${esRep(x[0])&&S.ubic[x[0]].envioSuyo?' <span class="sub">(son de él)</span>':esRep(x[0])&&pagaViaje(S.ubic[x[0]])?' <span class="sub">(son de él)</span>':''}</span><b>${fmt$(x[1])}</b></div>`).join(''); }
 /* costos y ganancia (el costo se toma del Catálogo actual) */
 const fmt2 = n => new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN',minimumFractionDigits:0,maximumFractionDigits:2}).format(Number(n)||0);
 function costoUnitP(p){ const c=Number(p&&p.costoCaja)||0, n=Math.round(Number(p&&p.piezasCompra)||0); return c>0&&n>0 ? c/n : 0; }
@@ -431,7 +444,7 @@ const piezasLinea = l => piezasDe([l]);
 function ajenoLinea(l){ if(l.t!=='k') return 0; const k=S.promos[l.id]; return (Number(k&&k.ajeno)||0)*Math.round(Number(l.cant)||0); }
 function costoEntrada(cant){ let c=0; for(const pid in cant) if(cant[pid]>0) c+=cant[pid]*costoUnit(pid); return c; }
 function desglose(v){
-  const r={men:{ing:0,cos:0}, may:{ing:0,cos:0}, env:0, faltaCosto:{}};
+  const r={men:{ing:0,cos:0}, may:{ing:0,cos:0}, env:0, viaje:esViaje(v)?(Number(v.viaje)||0):0, faltaCosto:{}};
   const rep=v.debe!=null; let viejo=false;
   (v.lineas||[]).forEach(l=>{
     const g = l.t==='c' ? r.may : r.men;
@@ -445,13 +458,21 @@ function desglose(v){
   r.env = v.envioTuyo!=null ? (Number(v.envioTuyo)||0) : (rep ? (v.envioSuyo?0:(Number(v.envio)||0)) : (Number(v.envio)||0));
   return r;
 }
-const ganDe = v => { const d=desglose(v); return d.men.ing-d.men.cos+d.may.ing-d.may.cos+d.env; };
+const ganDe = v => { const d=desglose(v); return d.men.ing-d.men.cos+d.may.ing-d.may.cos+d.env-d.viaje; };
 function comResumen(u){ const e=Object.entries((u&&u.comision)||{}).filter(x=>Number(x[1])>0); return e.length ? 'Gana: '+e.map(x=>nombreProd(x[0])+' '+fmt$(x[1])).join(' · ') : 'No gana comisión'; }
 function metaHoy(ventas,cobrado,aj){ const parts=['Se cobró '+fmt$(cobrado)]; const g=ventas.reduce((s,v)=>s+ganaDe(v),0); if(g) parts.push(fmt$(g)+' para repartidores'); const t=ajenoTxt(aj); if(t) parts.push(t); return parts.join(' · '); }
 function ganaHtml(ventas){ const o={}; ventas.forEach(v=>{ if(v.debe!=null) o[v.vend]=(o[v.vend]||0)+ganaDe(v); }); const e=Object.entries(o); if(!e.length) return ''; return `<div class="lbl" style="margin-top:10px">Ganan repartidores</div>`+e.map(x=>`<div class="kv"><span>${esc(nombreVend(x[0]))}</span><b>${fmt$(x[1])}</b></div>`).join(''); }
 function cobroTxt(v){
   const rep=v.debe!=null, aj=Number(v.ajeno)>0; if(!rep && !aj) return '';
   if(v.paraSi) return 'Botella para '+esc(v.vendNombre||nombreVend(v.vend))+' a precio especial · sin comisión · te debe '+fmt$(v.debe);
+  if(esViaje(v)){
+    const nm=esc(v.vendNombre||nombreVend(v.vend)), d=Number(v.debe)||0;
+    const p=[v.cobro==='dueno' ? 'Te pagaron a ti '+fmt$(v.total) : nm+' cobró '+fmt$(v.total), 'viaje '+fmt$(v.viaje)];
+    if(Number(v.envio)>0) p.push('envío '+fmt$(v.envio)+' para '+nm);
+    p.push(d>=0 ? 'te debe '+fmt$(d) : 'le debes '+fmt$(-d));
+    if(aj) p.push(ajenoTxt(v.ajenoDetalle));
+    return p.join(' · ');
+  }
   const parts=['Se cobró '+fmt$(v.total)];
   if(rep){ const nm=esc(v.vendNombre||nombreVend(v.vend)); parts.push(nm+' gana '+fmt$(ganaDe(v))); parts.push('te debe '+fmt$(v.debe)); }
   if(aj) parts.push(ajenoTxt(v.ajenoDetalle));
@@ -461,13 +482,16 @@ function repCard(u, vv, chips){
   const saldo=Number(u.saldo)||0, nm=esc(u.nombre);
   const cob=vv.reduce((s,v)=>s+(Number(v.total)||0),0), gana=vv.reduce((s,v)=>s+ganaDe(v),0), env=vv.reduce((s,v)=>s+(Number(v.envio)||0),0);
   const debHoy=vv.reduce((s,v)=>s+(v.debe!=null?(Number(v.debe)||0):(Number(v.total)||0)),0), aj=sumaAjeno(vv);
-  const big = saldo>=0 ? `<span class="lbl">Te debe</span><span class="money">${fmt$(saldo)}</span>` : `<span class="lbl">A favor de él</span><span class="money">${fmt$(-saldo)}</span>`;
-  const hoy = vv.length ? `Hoy: ${vv.length} ${plural(vv.length,'venta','ventas')} · cobró ${fmt$(cob)} · él gana ${fmt$(gana)}${env?' (con '+fmt$(env)+' de envíos)':''} · de hoy te debe ${fmt$(debHoy)}${Object.keys(aj).length?' (de eso '+ajenoTxt(aj)+')':''}` : 'Hoy no ha registrado ventas.';
+  const big = saldo>=0 ? `<span class="lbl">Te debe</span><span class="money">${fmt$(saldo)}</span>` : `<span class="lbl">Le debes</span><span class="money">${fmt$(-saldo)}</span>`;
+  const viaje=pagaViaje(u), vjHoy=vv.reduce((s,v)=>s+(esViaje(v)?Number(v.viaje)||0:0),0);
+  const hoy = !vv.length ? 'Hoy no tiene ventas.' : viaje
+    ? `Hoy: ${vv.length} ${plural(vv.length,'venta','ventas')} · viajes ${fmt$(vjHoy)}${env?' · envíos para él '+fmt$(env):''} · él gana ${fmt$(gana)}`
+    : `Hoy: ${vv.length} ${plural(vv.length,'venta','ventas')} · cobró ${fmt$(cob)} · él gana ${fmt$(gana)}${env?' (con '+fmt$(env)+' de envíos)':''} · de hoy te debe ${fmt$(debHoy)}${Object.keys(aj).length?' (de eso '+ajenoTxt(aj)+')':''}`;
   return `<article class="card vcard">
-    <div class="vc-head"><div><h3 class="h3">${nm}</h3><span class="sub">Repartidor</span>${tieneAcuerdo(u)?'':' <span class="pill warn">Faltan sus montos</span>'}</div>
+    <div class="vc-head"><div><h3 class="h3">${nm}</h3><span class="sub">${viaje?'Repartidor · le pagas por viaje':'Repartidor'}</span>${tieneAcuerdo(u)||viaje?'':' <span class="pill warn">Faltan sus montos</span>'}</div>
     <div class="vc-money">${big}</div></div>
     <span class="sub">${hoy}</span>
-    <button class="btn small ghost" data-a="entrega" data-id="${esc(u.id)}">Anotar dinero que te dio</button>
+    <button class="btn small ghost" data-a="entrega" data-id="${esc(u.id)}">${viaje?'Anotar pago o dinero':'Anotar dinero que te dio'}</button>
     <div class="lbl">Trae ahorita</div>
     <div class="chips">${chips}</div>
   </article>`;
@@ -476,6 +500,10 @@ function sumaAjeno(ventas){ const det={}; ventas.forEach(v=>{ const d=v.ajenoDet
 function ajenoTxt(det){ return Object.entries(det||{}).filter(e=>e[1]>0).map(e=>fmt$(e[1])+' para '+esc(e[0])).join(' · '); }
 function ajenoTicket(){
   const v=S.venta, a=ajenoDe(v.lineas);
+  if(esRep(v.vend) && pagaViaje(S.ubic[v.vend])){
+    if(!a.tot) return '';
+    return Object.entries(a.det).map(e=>`<div class="kv"><span>De los productos, para ${esc(e[0])}</span><b>−${fmt$(e[1])}</b></div>`).join('');
+  }
   if(esRep(v.vend)){
     const u=S.ubic[v.vend], r=calcVenta(v.vend, v.lineas, v.envio), nm=esc(u.nombre);
     let h=`<div class="kv"><span>${nm} gana${r.envio&&r.envioSuyo?' (con envío)':''}</span><b>${fmt$(r.gana)}</b></div><div class="kv"><span>${nm} te debe</span><b>${fmt$(r.debe)}</b></div>`;
@@ -739,6 +767,7 @@ function vVender(){
   if(!ps.length) return vacioCatalogo();
   if(!S.ubic[v.vend] && us[0]) v.vend=us[0].id;
   const rep=esRep(v.vend); if(rep) v.modo='menudeo';
+  const porViaje=rep && pagaViaje(S.ubic[v.vend]);
   const pz=piezasDe(v.lineas), falt=faltantes(v.vend,pz), total=totalCobrar();
   const quien=nombreVend(v.vend);
   const promosHtml = ks.length ? `<section class="block"><div class="lbl">Promos</div><div class="pgrid">${ks.map(k=>`<button class="pbtn promo" data-a="addk" data-id="${esc(k.id)}"><span class="pn">${esc(k.nombre)}</span><span class="q">${esc(compTxt(k))}</span><span class="pr">${fmt$(k.precio)}</span></button>`).join('')}</div></section>` : '';
@@ -775,11 +804,21 @@ function vVender(){
       <div class="head-row"><span class="lbl">Venta de ${esc(quien)} · ${v.modo==='mayoreo'?'Mayoreo':'Menudeo'}</span><button class="linkbtn" data-a="limpiar">Vaciar</button></div>
       ${lineas}
       ${regaloBtns()}
+      ${porViaje ? `
+      <div class="field"><span class="lbl">Viaje · lo que te cobra ${esc(quien)}</span>
+        <label class="tl-price"><span>$</span><input id="v-viaje" data-f="viaje" inputmode="decimal" value="${v.viaje?esc(v.viaje):''}" placeholder="0" aria-label="Viaje"></label></div>
+      <div class="field"><span class="lbl">Envío que paga el cliente</span>
+        <label class="tl-price"><span>$</span><input id="v-envio" data-f="envio" inputmode="decimal" value="${v.envio?esc(v.envio):''}" placeholder="0" aria-label="Envío que paga el cliente"></label>
+        <span class="sub">${esTarde()?`<span class="warnc">Ya pasan de las 10 de la noche: pon el envío que pidió ${esc(quien)}.</span> `:'Solo después de las 10 de la noche. '}Todo el envío es para ${esc(quien)}.</span></div>
+      <div class="field"><span class="lbl">¿Quién cobró al cliente?</span><div class="seg" role="group" aria-label="Quién cobró">
+        <button class="segb ${v.cobro!=='dueno'?'on':''}" data-a="cobro" data-c="rep" aria-pressed="${v.cobro!=='dueno'}">${esc(quien)}</button>
+        <button class="segb ${v.cobro==='dueno'?'on':''}" data-a="cobro" data-c="dueno" aria-pressed="${v.cobro==='dueno'}">Me pagaron a mí</button></div></div>` : `
       <div class="field"><span class="lbl">Envío cobrado (opcional)</span>
         <label class="tl-price"><span>$</span><input id="v-envio" data-f="envio" inputmode="decimal" value="${v.envio?esc(v.envio):''}" placeholder="0" aria-label="Envío cobrado"></label>
-        <span class="sub">${envioHint(v.vend)}</span></div>
+        <span class="sub">${envioHint(v.vend)}</span></div>`}
       <label class="field"><span class="lbl">Cliente o nota (opcional)</span><input id="v-nota" value="${esc(v.nota)}" placeholder="Ej. Juan, colonia Centro"></label>
-      <div class="total-row"><span class="lbl">Total a cobrar</span><span class="money" id="v-total">${fmt$(total)}</span></div>
+      <div class="total-row"><span class="lbl">${porViaje?'Total que paga el cliente':'Total a cobrar'}</span><span class="money" id="v-total">${fmt$(total)}</span></div>
+      ${porViaje?`<div id="v-cuenta">${cuentaViaje()}</div>`:''}
       <div id="v-ajeno">${ajenoTicket()}</div>
       <div id="v-aviso">${aviso}</div>
       <button class="btn block money-btn" id="v-guardar" data-a="guardar">${falt.length?'Guardar aunque falte':'Guardar venta'}</button>
@@ -799,6 +838,20 @@ function vVender(){
   ${promosHtml}
   ${prodsHtml}`;
 }
+/* la cuenta con el repartidor que cobra por viaje, para que se vea antes de guardar */
+function cuentaViaje(){
+  const v=S.venta, nm=esc(nombreVend(v.vend)), c=calcVenta(v.vend, v.lineas, v.envio, v.viaje, v.cobro);
+  const filas = c.cobro==='rep'
+    ? `<div class="kv"><span>${nm} cobra al cliente</span><b>${fmt$(c.total)}</b></div>
+       <div class="kv"><span>Te toca de los productos</span><b>${fmt$(c.prod)}</b></div>
+       <div class="kv"><span>− Su viaje</span><b>${fmt$(c.viaje)}</b></div>
+       ${c.envio?`<div class="kv"><span>El envío se lo queda él</span><b>${fmt$(c.envio)}</b></div>`:''}`
+    : `<div class="kv"><span>Te pagaron a ti</span><b>${fmt$(c.total)}</b></div>
+       <div class="kv"><span>Le debes su viaje</span><b>${fmt$(c.viaje)}</b></div>
+       ${c.envio?`<div class="kv"><span>+ Le debes el envío</span><b>${fmt$(c.envio)}</b></div>`:''}`;
+  const res = c.debe>=0 ? `<div class="kv tot"><span>${nm} te debe</span><b>${fmt$(c.debe)}</b></div>` : `<div class="kv tot"><span>Le debes a ${nm}</span><b>${fmt$(-c.debe)}</b></div>`;
+  return `<div class="vcuenta">${filas}${res}<span class="sub">${nm} gana ${fmt$(c.gana)} con esta venta (viaje${c.envio?' + envío':''}).${c.viaje?'':' <span class="warnc">Falta anotar el viaje.</span>'}</span></div>`;
+}
 function avisoVenta(quien, falt){
   return falt.length ? `<div class="aviso">A ${esc(quien)} no le alcanza:<ul>${falt.map(f=>`<li>${esc(nombreProd(f.pid))}: pide ${f.pide}, tiene ${f.hay}</li>`).join('')}</ul></div>` : '';
 }
@@ -809,6 +862,7 @@ function actualizarTotal(){
     if(l.t==='c'){ const pe=document.getElementById('pr-'+i); if(pe && pe!==document.activeElement) pe.value=l.precio; const de=document.getElementById('dt-'+i); if(de) de.textContent=detCaja(l); }
   });
   const t=document.getElementById('v-total'); if(t) t.textContent=fmt$(totalCobrar());
+  const cu=document.getElementById('v-cuenta'); if(cu) cu.innerHTML=cuentaViaje();
   const aj=document.getElementById('v-ajeno'); if(aj) aj.innerHTML=ajenoTicket();
   const falt=faltantes(v.vend, piezasDe(v.lineas));
   const av=document.getElementById('v-aviso'); if(av) av.innerHTML=avisoVenta(nombreVend(v.vend), falt);
@@ -831,7 +885,7 @@ async function guardarVenta(){
     nombre: nombreLinea(l)
   }));
   if(!lineas.length){ toast('Agrega al menos un producto o promo.'); return; }
-  const salen=piezasDe(lineas), regalos=regalosDe(lineas), piezas=restar(salen, regalos), cv=calcVenta(v.vend, lineas, v.envio), total=cv.total;
+  const salen=piezasDe(lineas), regalos=regalosDe(lineas), piezas=restar(salen, regalos), cv=calcVenta(v.vend, lineas, v.envio, v.viaje, v.cobro), total=cv.total;
   const cambios={}; cambios[v.vend]={}; for(const pid in salen) cambios[v.vend][pid]=-salen[pid];
   const id=uid('v'), dia=v.dia||S.hoy;
   const aj=ajenoDe(lineas);
@@ -840,11 +894,12 @@ async function guardarVenta(){
   let msg='Venta guardada · '+fmt$(total);
   if(cv.rep){
     cv.det.forEach((d,i)=>{ lineas[i].lista=d.lista; lineas[i].com=d.com; });
-    venta.debe=cv.debe; venta.gana=cv.gana; venta.envioSuyo=cv.envioSuyo;
-    msg+=' · '+nombreVend(v.vend)+' te debe '+fmt$(cv.debe);
+    venta.debe=Math.round(cv.debe*100)/100; venta.gana=cv.gana; venta.envioSuyo=cv.envioSuyo;
+    if(cv.porViaje){ venta.pagoRep='viaje'; venta.viaje=cv.viaje; venta.cobro=cv.cobro; venta.envioTuyo=0; }
+    msg+=' · '+nombreVend(v.vend)+(cv.debe>=0?' te debe '+fmt$(cv.debe):' · le debes '+fmt$(-cv.debe));
   } else if(aj.tot){ msg+=' ('+fmt$(total-aj.tot)+' tuyos)'; }
   const ok=await intentar(async()=>{ await escribirDia(dia,{ventas:{[id]:venta}}); await aplicar(cambios,1); if(venta.debe!=null){ await ajustarSaldo(v.vend, venta.debe); await S.db.doc('repVentas/'+id).set({id, rep:v.vend, dia, hora:venta.hora, venta, absorbida:true, borrada:false, origen:'dueno'}); } }, msg);
-  if(ok){ v.lineas=[]; v.nota=''; v.envio=0; render(); window.scrollTo({top:0,behavior:'smooth'}); }
+  if(ok){ v.lineas=[]; v.nota=''; v.envio=0; v.viaje=0; v.cobro='rep'; render(); window.scrollTo({top:0,behavior:'smooth'}); }
 }
 
 /* --- Inventario --- */
@@ -899,10 +954,10 @@ function vHist(){
   const gsts = vf==='todos' ? lista(d&&d.gastos).sort((a,b)=>String(b.hora).localeCompare(String(a.hora))) : [];
   const gasHtml = gsts.length ? `<section class="block"><div class="lbl">Gastos</div><div class="list">${gsts.map(g=>gastoFila(g,false)).join('')}</div></section>` : '';
   const ents=lista(d&&d.entregas).filter(e=>vf==='todos'||e.rep===vf).sort((a,b)=>String(b.hora).localeCompare(String(a.hora)));
-  const entHtml = ents.length ? `<section class="block"><div class="lbl">Dinero que te entregaron</div><div class="list">${ents.map(e=>{
-    const conf=S.confirmar==='e:'+e.id;
-    return `<div class="vrow"><div class="vrow-top"><span class="pn">${esc(e.repNombre||nombreVend(e.rep))}</span><span class="sub">${esc(horaDe(e.hora))}</span><span class="money">${fmt$(e.monto)}</span></div>${e.nota?`<div class="sub">${esc(e.nota)}</div>`:''}
-      ${conf?`<div class="confirm">¿Deshacer esta entrega? Se vuelve a sumar a lo que te debe.<button class="btn small danger" data-a="siborrare" data-id="${esc(e.id)}">Sí, deshacer</button><button class="btn small ghost" data-a="nobor">No</button></div>`:`<button class="linkbtn" data-a="borrare" data-id="${esc(e.id)}">Deshacer</button>`}</div>`;
+  const entHtml = ents.length ? `<section class="block"><div class="lbl">Dinero con tus repartidores</div><div class="list">${ents.map(e=>{
+    const conf=S.confirmar==='e:'+e.id, pg=e.tipo==='pago';
+    return `<div class="vrow"><div class="vrow-top"><span class="pn">${esc(e.repNombre||nombreVend(e.rep))}</span><span class="pill ${pg?'propio':'ok'}">${pg?'Le pagaste':'Te dio'}</span><span class="sub">${esc(horaDe(e.hora))}</span><span class="money">${fmt$(e.monto)}</span></div>${e.nota?`<div class="sub">${esc(e.nota)}</div>`:''}
+      ${conf?`<div class="confirm">${pg?'¿Deshacer este pago? Se vuelve a sumar a lo que le debes.':'¿Deshacer esta entrega? Se vuelve a sumar a lo que te debe.'}<button class="btn small danger" data-a="siborrare" data-id="${esc(e.id)}">Sí, deshacer</button><button class="btn small ghost" data-a="nobor">No</button></div>`:`<button class="linkbtn" data-a="borrare" data-id="${esc(e.id)}">Deshacer</button>`}</div>`;
   }).join('')}</div></section>` : '';
   const total=ventas.reduce((s,v)=>s+netoDe(v),0), ajDia=sumaAjeno(ventas);
   const porVend={}; ventas.forEach(v=>{ porVend[v.vend]=(porVend[v.vend]||0)+netoDe(v); });
@@ -1045,12 +1100,12 @@ function vGan(){
   const ventas=[], compras=[], gastos=[];
   S.gDocs.forEach(doc=>{ lista(doc.ventas).forEach(v=>ventas.push(v)); lista(doc.movs).forEach(m=>{ if(m.tipo==='entrada') compras.push(Object.assign({dia:doc.dia}, m)); }); lista(doc.gastos).forEach(g=>gastos.push(Object.assign({dia:doc.dia}, g))); });
   const porFecha=(a,b)=>String(b.dia+b.hora).localeCompare(String(a.dia+a.hora));
-  const t={men:{ing:0,cos:0}, may:{ing:0,cos:0}, env:0, falta:{}};
-  ventas.forEach(v=>{ const d=desglose(v); t.men.ing+=d.men.ing; t.men.cos+=d.men.cos; t.may.ing+=d.may.ing; t.may.cos+=d.may.cos; t.env+=d.env; Object.assign(t.falta, d.faltaCosto); });
-  const gMen=t.men.ing-t.men.cos, gMay=t.may.ing-t.may.cos, gan=gMen+gMay+t.env;
+  const t={men:{ing:0,cos:0}, may:{ing:0,cos:0}, env:0, viaje:0, falta:{}};
+  ventas.forEach(v=>{ const d=desglose(v); t.men.ing+=d.men.ing; t.men.cos+=d.men.cos; t.may.ing+=d.may.ing; t.may.cos+=d.may.cos; t.env+=d.env; t.viaje+=d.viaje; Object.assign(t.falta, d.faltaCosto); });
+  const gMen=t.men.ing-t.men.cos, gMay=t.may.ing-t.may.cos, bruto=gMen+gMay+t.env, gan=bruto-t.viaje;
   const gas=gastos.reduce((s,g)=>s+(Number(g.monto)||0),0), neta=gan-gas;
   const inv=compras.reduce((s,m)=>s+(Number(m.costo)||0),0);
-  const entro=ventas.reduce((s,v)=>s+netoDe(v),0), salio=inv+gas, efectivo=entro-salio;
+  const entro=ventas.reduce((s,v)=>s+netoDe(v),0), salio=inv+gas+t.viaje, efectivo=entro-salio;
   const cobrado=ventas.reduce((s,v)=>s+(Number(v.total)||0),0), ajenoTot=ventas.reduce((s,v)=>s+(Number(v.ajeno)||0),0);
   const difVenta=Math.round(cobrado-entro);
   const cap1=s=>String(s).charAt(0).toUpperCase()+String(s).slice(1);
@@ -1076,9 +1131,9 @@ function vGan(){
   const faltan=Object.keys(t.falta).map(nombreProd);
   const aviso = faltan.length ? `<div class="aviso">Falta el costo de: ${esc(faltan.join(', '))}. Mientras no lo pongas, lo que vendes de eso se cuenta como ganancia completa. <button class="linkbtn" data-a="tab" data-t="cat">Ponerlo en Catálogo</button></div>` : '';
   let barra='';
-  if(gan>0 && gMen>=0 && gMay>=0){
-    const seg=(val,cls)=> val>0 ? `<i class="${cls}" style="width:${(val/gan*100).toFixed(2)}%"></i>` : '';
-    const pct=val=>Math.round(val/gan*100)+'%';
+  if(bruto>0 && gMen>=0 && gMay>=0){
+    const seg=(val,cls)=> val>0 ? `<i class="${cls}" style="width:${(val/bruto*100).toFixed(2)}%"></i>` : '';
+    const pct=val=>Math.round(val/bruto*100)+'%';
     barra=`<div class="gbar" role="img" aria-label="Menudeo ${pct(gMen)}, mayoreo ${pct(gMay)}${t.env?', envíos '+pct(t.env):''}">${seg(gMen,'gm')}${seg(gMay,'gy')}${seg(t.env,'ge')}</div>
     <div class="gleg"><span><i class="gm"></i>Menudeo ${pct(gMen)}</span><span><i class="gy"></i>Mayoreo ${pct(gMay)}</span>${t.env>0?`<span><i class="ge"></i>Envíos ${pct(t.env)}</span>`:''}</div>`;
   }
@@ -1093,7 +1148,7 @@ function vGan(){
     <span class="lbl">Ganancia neta · ${esc(nombre)}</span>
     <span class="amt">${neta<0?'−':''}${fmt$(Math.abs(neta))}</span>
     <span class="meta">Ganancia de tus ventas <b>${fmt$(gan)}</b>${gas?` − gastos <b>${fmt$(gas)}</b>`:''}</span>
-    <span class="meta">Lo que te queda después de pagar la mercancía${gas?' y tus gastos':''}.</span>
+    <span class="meta">Lo que te queda después de pagar la mercancía${t.viaje?(gas?', los viajes':' y los viajes'):''}${gas?' y tus gastos':''}.</span>
   </section>
   ${aviso}
   ${mesesHtml}
@@ -1103,6 +1158,7 @@ function vGan(){
       ${fila('Menudeo','Botellas sueltas y promos',t.men.ing,t.men.cos,gMen)}
       ${fila('Mayoreo','Cajas completas',t.may.ing,t.may.cos,gMay)}
       ${t.env?fila('Envíos','Los que cobraste y son tuyos',t.env,null,t.env):''}
+      ${t.viaje?`<div class="irow"><div class="grow"><span class="pn">Viajes de repartidores</span><span class="sub">Lo que les pagas por llevar los pedidos. Ya se restó de tu ganancia.</span></div><div class="right"><span class="bign badc">−${fmt$(t.viaje)}</span><span class="sub">pagaste</span></div></div>`:''}
     </div>
   </section>
   <section class="block"><div class="head-row"><span class="lbl">Gastos</span><button class="btn small" data-a="gasto">Anotar gasto</button></div>
@@ -1110,7 +1166,7 @@ function vGan(){
   </section>
   <section class="block"><div class="lbl">Tu dinero</div>
     <div class="list">
-      <div class="irow"><div class="grow"><span class="pn">Efectivo ${esc(frase)}</span><span class="sub">Te entraron ${fmt$(entro)} de ventas y salieron ${fmt$(salio)} en mercancía y gastos. El resto de tu ganancia está en botellas o te lo deben.</span></div><span class="bign ${efectivo<0?'badc':''}">${efectivo<0?'−':''}${fmt$(Math.abs(efectivo))}</span></div>
+      <div class="irow"><div class="grow"><span class="pn">Efectivo ${esc(frase)}</span><span class="sub">Te entraron ${fmt$(entro)} de ventas y salieron ${fmt$(salio)} en mercancía, gastos${t.viaje?' y viajes':''}. El resto de tu ganancia está en botellas o te lo deben.</span></div><span class="bign ${efectivo<0?'badc':''}">${efectivo<0?'−':''}${fmt$(Math.abs(efectivo))}</span></div>
       <div class="irow"><div class="grow"><span class="pn">Invertiste en mercancía</span><span class="sub">${compras.length?compras.length+' '+plural(compras.length,'compra','compras')+' '+esc(frase):'No anotaste compras '+esc(frase)+'. Se anotan en Inventario, con Llegó mercancía.'}</span></div><span class="bign">${fmt$(inv)}</span></div>
       <div class="irow"><div class="grow"><span class="pn">Tu mercancía vale</span><span class="sub">Lo que tienes ahorita en bodega y con tus repartidores, a lo que te costó${vm.falta?'. No cuenta lo que no tiene costo':''}</span></div><span class="bign">${fmt$(vm.v)}</span></div>
       <div class="irow"><div class="grow"><span class="pn">Te deben tus repartidores</span><span class="sub">Dinero de ventas que todavía no te entregan</span></div><span class="bign">${fmt$(deben)}</span></div>
@@ -1131,7 +1187,7 @@ function vCat(){
     }).join('')}</div>`;
   }).join('') : '<div class="empty"><span>Agrega tu primer producto.</span></div>';
   const promoHtml = ks.length ? `<div class="list">${ks.map(k=>`<div class="crow ${k.activo===false?'off':''}"><div class="grow"><span class="pn">${esc(k.nombre)}</span><span class="sub">${esc(compTxt(k))||'Sin productos'}${Number(k.ajeno)>0?' · '+fmt$(k.ajeno)+' para '+esc(k.ajenoDe||'tu amigo'):''}${k.activo===false?' · oculta':''}</span></div><span class="money" style="font-size:19px">${fmt$(k.precio)}</span><button class="btn small ghost" data-a="editk" data-id="${esc(k.id)}">Editar</button></div>`).join('')}</div>` : '<div class="empty"><span>Todavía no hay promos.</span></div>';
-  const ubicHtml = `<div class="list">${us.map(u=>`<div class="crow ${u.activo===false?'off':''}"><div class="grow"><span class="pn">${esc(u.nombre)}</span><span class="sub">${u.tipo==='bodega'?'Tú · vende desde bodega':'Repartidor'+(tieneAcuerdo(u)?' · '+esc(comResumen(u)):'')+(propioResumen(u)?' · '+esc(propioResumen(u)):'')+(u.envioSuyo?' · se queda los envíos':'')}${u.activo===false?' · oculto':''}</span></div>${u.tipo==='rep'&&!tieneAcuerdo(u)?'<span class="pill warn">Faltan sus montos</span>':''}<button class="btn small ghost" data-a="editu" data-id="${esc(u.id)}">Editar</button></div>`).join('')}</div>`;
+  const ubicHtml = `<div class="list">${us.map(u=>`<div class="crow ${u.activo===false?'off':''}"><div class="grow"><span class="pn">${esc(u.nombre)}</span><span class="sub">${u.tipo==='bodega'?'Tú · vende desde bodega':'Repartidor'+(pagaViaje(u)?' · le pagas por viaje':tieneAcuerdo(u)?' · '+esc(comResumen(u)):'')+(propioResumen(u)?' · '+esc(propioResumen(u)):'')+(u.envioSuyo?' · se queda los envíos':'')}${u.activo===false?' · oculto':''}</span></div>${u.tipo==='rep'&&!tieneAcuerdo(u)&&!pagaViaje(u)?'<span class="pill warn">Faltan sus montos</span>':''}<button class="btn small ghost" data-a="editu" data-id="${esc(u.id)}">Editar</button></div>`).join('')}</div>`;
   return `
   <section class="block"><h2 class="h2">Catálogo</h2><span class="sub">Precios, promos y quién vende. Lo que cambies aquí se usa en Vender e Inventario.</span></section>
   <section class="block"><div class="head-row"><h3 class="h3">Productos</h3><button class="btn small" data-a="editp" data-id="">Agregar producto</button></div>${prodHtml}</section>
@@ -1228,23 +1284,29 @@ function propioEditor(u){
 }
 function sheetEntrega(s){
   const u=S.ubic[s.rep], saldo=Number(u&&u.saldo)||0, nm=esc(u?u.nombre:'');
-  return `${cabeza('Dinero de '+nm, saldo>=0?'Te debe '+fmt$(saldo)+'. Lo que anotes se resta.':'Tiene '+fmt$(-saldo)+' a su favor.')}
-    <label class="field"><span class="lbl">¿Cuánto te dio?</span><input id="e-monto" inputmode="decimal" value="${saldo>0?Math.round(saldo):''}" placeholder="$"></label>
-    <label class="field"><span class="lbl">Nota (opcional)</span><input id="e-nota" placeholder="Ej. Corte del día"></label>
+  if(!s.dir) s.dir = saldo<0 ? 'pago' : 'dio';
+  const pago=s.dir==='pago', sug = pago ? (saldo<0?Math.round(-saldo):'') : (saldo>0?Math.round(saldo):'');
+  return `${cabeza('Dinero con '+nm, saldo>=0?'Te debe '+fmt$(saldo)+'.':'Le debes '+fmt$(-saldo)+'.')}
+    <div class="seg" role="group" aria-label="Quién dio el dinero"><button class="segb ${!pago?'on':''}" data-a="edir" data-d="dio" aria-pressed="${!pago}">${nm} te dio</button><button class="segb ${pago?'on':''}" data-a="edir" data-d="pago" aria-pressed="${pago}">Tú le pagaste</button></div>
+    <span class="sub">${pago?'Lo que le pagues se resta de lo que le debes (sus viajes, envíos o comisiones).':'Lo que te dé se resta de lo que te debe.'}</span>
+    <label class="field"><span class="lbl">${pago?'¿Cuánto le pagaste?':'¿Cuánto te dio?'}</span><input id="e-monto" inputmode="decimal" value="${sug}" placeholder="$"></label>
+    <label class="field"><span class="lbl">Nota (opcional)</span><input id="e-nota" placeholder="${pago?'Ej. Viajes de la semana':'Ej. Corte del día'}"></label>
     <div class="sheet-actions"><button class="btn ghost" data-a="cerrar">Cancelar</button><button class="btn" data-a="guardare">Guardar</button></div>`;
 }
 async function guardarEntrega(){
   const s=S.sheet, monto=num(document.getElementById('e-monto').value);
-  if(!(monto>0)){ toast('Escribe cuánto te dio.'); return; }
+  const pago=s.dir==='pago';
+  if(!(monto>0)){ toast(pago?'Escribe cuánto le pagaste.':'Escribe cuánto te dio.'); return; }
   const nota=document.getElementById('e-nota').value.trim(), id=uid('e');
-  const ent={id, hora:new Date().toISOString(), rep:s.rep, repNombre:nombreVend(s.rep), monto, nota};
-  const ok=await intentar(async()=>{ await escribirDia(S.hoy,{entregas:{[id]:ent}}); await ajustarSaldo(s.rep,-monto); await S.db.doc('repEntregas/'+id).set({id, rep:s.rep, dia:S.hoy, hora:ent.hora, monto, nota}); }, 'Guardado · '+nombreVend(s.rep)+' te dio '+fmt$(monto));
+  const ent={id, hora:new Date().toISOString(), rep:s.rep, repNombre:nombreVend(s.rep), monto, nota}; if(pago) ent.tipo='pago';
+  const espejo={id, rep:s.rep, dia:S.hoy, hora:ent.hora, monto, nota}; if(pago) espejo.tipo='pago';
+  const ok=await intentar(async()=>{ await escribirDia(S.hoy,{entregas:{[id]:ent}}); await ajustarSaldo(s.rep, pago?monto:-monto); await S.db.doc('repEntregas/'+id).set(espejo); }, 'Guardado · '+(pago?'le pagaste '+fmt$(monto)+' a '+nombreVend(s.rep):nombreVend(s.rep)+' te dio '+fmt$(monto)));
   if(ok) cerrarSheet();
 }
 async function borrarEntrega(id){
   const dia=S.histDia, e=S.diaHist&&S.diaHist.entregas&&S.diaHist.entregas[id];
   if(!e) return;
-  const ok=await intentar(async()=>{ await escribirDia(dia,{entregas:{[id]:null}}); await ajustarSaldo(e.rep, Number(e.monto)||0); await S.db.doc('repEntregas/'+id).delete(); }, 'Entrega deshecha.');
+  const ok=await intentar(async()=>{ await escribirDia(dia,{entregas:{[id]:null}}); await ajustarSaldo(e.rep, (e.tipo==='pago'?-1:1)*(Number(e.monto)||0)); await S.db.doc('repEntregas/'+id).delete(); }, e.tipo==='pago'?'Pago deshecho.':'Entrega deshecha.');
   S.confirmar=null; if(ok) render();
 }
 function sheetMov(s){
@@ -1377,10 +1439,17 @@ async function guardarPromo(){
 }
 function sheetUbic(s){
   const u=s.id?S.ubic[s.id]:null;
+  if(!s.pago) s.pago = pagaViaje(u) ? 'viaje' : 'comision';
+  const vj=s.pago==='viaje', nm=u?esc(u.nombre):'el repartidor';
+  const pagoHtml = `<div class="field"><span class="lbl">¿Cómo le pagas?</span><div class="seg" role="group" aria-label="Cómo le pagas">
+      <button class="segb ${!vj?'on':''}" data-a="upago" data-p="comision" aria-pressed="${!vj}">Comisión por botella</button>
+      <button class="segb ${vj?'on':''}" data-a="upago" data-p="viaje" aria-pressed="${vj}">Por viaje</button></div></div>
+    <div id="u-com-box" class="stack" ${vj?'hidden':''}>${comisionEditor(u)}</div>
+    <div id="u-viaje-box" class="stack" ${vj?'':'hidden'}><div class="aviso" style="background:var(--surface-2);color:var(--ink)">No gana comisión por botella. En cada venta anotas <b>cuánto te cobra del viaje</b> y, después de las 10 de la noche, <b>el envío que paga el cliente</b> (ese envío es todo para él). También anotas quién cobró: él o tú.</div></div>`;
   return `${cabeza(u?'Editar':'Nuevo repartidor', u&&u.tipo==='bodega'?'Así aparecerás tú en las ventas.':'')}
     <label class="field"><span class="lbl">Nombre</span><input id="u-nombre" value="${esc(u?u.nombre:'')}" placeholder="Ej. Toño"></label>
     ${u&&u.tipo==='bodega'?'':`<label class="check"><input type="checkbox" id="u-act" ${!u||u.activo!==false?'checked':''}> Activo (aparece en Vender e Inventario)</label>`}
-    ${u&&u.tipo==='bodega'?'':comisionEditor(u)}
+    ${u&&u.tipo==='bodega'?'':pagoHtml}
     ${u&&u.tipo==='bodega'?'':propioEditor(u)}
     ${u&&u.tipo==='rep'?accesoHtml(u):''}
     <div class="sheet-actions"><button class="btn ghost" data-a="cerrar">Cancelar</button><button class="btn" data-a="guardaru">Guardar</button></div>`;
@@ -1426,8 +1495,9 @@ async function guardarUbic(){
     if(algunPP || (u && u.precioPropio)) precioPropio=pp;
   }
   let ok;
-  if(s.id){ const patch={nombre, activo}; if(comision) patch.comision=comision; if(precioPropio) patch.precioPropio=precioPropio; const envEl=document.getElementById('u-envio'); if(envEl) patch.envioSuyo=envEl.checked; ok=await intentar(()=>S.db.doc('ubicaciones/'+s.id).update(patch), 'Guardado.'); }
-  else { const id=uid('r'); const orden=Math.max(0,...Object.values(S.ubic).map(x=>Number(x.orden)||0))+1; const data={nombre, tipo:'rep', orden, activo:true, stock:{}, saldo:0}; if(comision) data.comision=comision; if(precioPropio) data.precioPropio=precioPropio; const envEl=document.getElementById('u-envio'); if(envEl) data.envioSuyo=envEl.checked; ok=await intentar(()=>S.db.doc('ubicaciones/'+id).set(data), 'Repartidor agregado.'); }
+  const pago = (!u || u.tipo==='rep') ? (s.pago==='viaje'?'viaje':'comision') : null;
+  if(s.id){ const patch={nombre, activo}; if(pago) patch.pago=pago; if(comision) patch.comision=comision; if(precioPropio) patch.precioPropio=precioPropio; const envEl=document.getElementById('u-envio'); if(envEl) patch.envioSuyo=envEl.checked; ok=await intentar(()=>S.db.doc('ubicaciones/'+s.id).update(patch), 'Guardado.'); }
+  else { const id=uid('r'); const orden=Math.max(0,...Object.values(S.ubic).map(x=>Number(x.orden)||0))+1; const data={nombre, tipo:'rep', orden, activo:true, stock:{}, saldo:0, pago:pago||'comision'}; if(comision) data.comision=comision; if(precioPropio) data.precioPropio=precioPropio; const envEl=document.getElementById('u-envio'); if(envEl) data.envioSuyo=envEl.checked; ok=await intentar(()=>S.db.doc('ubicaciones/'+id).set(data), 'Repartidor agregado.'); }
   if(ok) cerrarSheet();
 }
 
@@ -1485,7 +1555,12 @@ const A = {
   gasto: () => abrirSheet({tipo:'gasto'}),
   guardarg: () => guardarGasto(),
   borrarg: d => { S.confirmar='g:'+d.id; render(); },
-  siborrarg: d => borrarGasto(d.id)
+  siborrarg: d => borrarGasto(d.id),
+  cobro: d => { S.venta.cobro = d.c==='dueno' ? 'dueno' : 'rep'; render(); },
+  edir: d => { if(S.sheet){ S.sheet.dir = d.d==='pago' ? 'pago' : 'dio'; renderSheet(); } },
+  upago: d => { if(!S.sheet) return; S.sheet.pago = d.p==='viaje' ? 'viaje' : 'comision'; const v=S.sheet.pago==='viaje';
+    const a=document.getElementById('u-com-box'), b=document.getElementById('u-viaje-box'); if(a) a.hidden=v; if(b) b.hidden=!v;
+    sheetEl.querySelectorAll('[data-a="upago"]').forEach(x=>{ const on=x.dataset.p===S.sheet.pago; x.classList.toggle('on',on); x.setAttribute('aria-pressed',on); }); }
 };
 function irTab(t){ S.tab=t; S.confirmar=null; try{ localStorage.setItem('pm-tab',t); }catch(e){} if(t==='gan') subGan(); render(); window.scrollTo({top:0}); }
 sheetEl.addEventListener('input', e=>{
@@ -1506,6 +1581,7 @@ view.addEventListener('input', e=>{
     if(f==='cant'){ l.cant=Math.max(0, parseInt(t.value,10)||0); } else { l.precio=num(t.value); l.manual=true; }
     actualizarTotal();
   } else if(f==='envio'){ S.venta.envio=Math.max(0, num(t.value)); actualizarTotal(); }
+  else if(f==='viaje'){ S.venta.viaje=Math.max(0, num(t.value)); actualizarTotal(); }
   else if(t.id==='v-nota'){ S.venta.nota=t.value; }
 });
 view.addEventListener('change', e=>{

@@ -248,6 +248,9 @@ const comDe=pid=>Number(S.ubic&&S.ubic.comision&&S.ubic.comision[pid])||0;
 /* botellas para él: precio especial que le pone el jefe (sin comisión, todo se suma a lo que debe) */
 const precioPropio=pid=>Number(S.ubic&&S.ubic.precioPropio&&S.ubic.precioPropio[pid])||0;
 const prodsPropios=()=>prodsActivos().filter(p=>precioPropio(p.id)>0);
+/* repartidor que cobra por viaje: sus ventas las anota el jefe; aquí solo las ve con lo que gana */
+const porViaje=()=>!!(S.ubic&&S.ubic.pago==='viaje');
+const montoEnt=e=>(e.tipo==='pago'?-1:1)*(Number(e.monto)||0);
 const compTxt=k=>Object.entries(k.items||{}).filter(e=>Number(e[1])>0).map(e=>e[1]+' '+nombreProd(e[0])).concat(Object.entries(k.regalo||{}).filter(e=>Number(e[1])>0).map(e=>e[1]+' '+nombreProd(e[0])+' de regalo')).join(' + ');
 const comPromo=k=>Object.entries(k.items||{}).reduce((s,e)=>s+Math.round(Number(e[1])||0)*comDe(e[0]),0);
 const nombreLinea=l=>l.t==='k' ? ((promo(l.id)||{}).nombre||'Promo') : l.t==='r' ? nombreProd(l.id)+' de regalo' : nombreProd(l.id);
@@ -332,36 +335,39 @@ function filaVenta(v){
   return `<div class="vrow">
     <div class="vrow-top"><span class="sub">${esc(horaDe(v.hora))}</span>${v.paraSi?'<span class="pill propio">Para ti</span>':''}${v._sinSubir?'<span class="pill warn">Sin subir</span>':''}${v._origen==='dueno'?`<span class="pill ok">La anotó ${esc(JEFE())}</span>`:''}<span class="money">${fmt$(v.total)}</span></div>
     <div class="vlines">${(v.lineas||[]).map(l=>`${l.cant}× ${esc(l.nombre)} <span class="sub">(${fmt$(l.precio)})</span>`).join(' · ')}${Number(v.envio)?` · Envío <span class="sub">(${fmt$(v.envio)})</span>`:''}</div>
-    <div class="vmeta">${v.paraSi?`<span class="sub">Precio especial · se suma a lo que le debes: ${fmt$(v.debe)}</span>`:`<span class="gn">Ganaste ${fmt$(v.gana)}</span><span class="sub">Le debes ${fmt$(v.debe)}</span>`}</div>
+    <div class="vmeta">${v.paraSi?`<span class="sub">Precio especial · se suma a lo que le debes: ${fmt$(v.debe)}</span>`
+      : v.pagoRep==='viaje'?`<span class="gn">Ganaste ${fmt$(v.gana)}</span><span class="sub">Viaje ${fmt$(v.viaje)}${Number(v.envio)?' · envío '+fmt$(v.envio):''} · ${v.cobro==='dueno'?'le pagaron a '+esc(JEFE()):'cobraste tú'}</span>`
+      : `<span class="gn">Ganaste ${fmt$(v.gana)}</span><span class="sub">Le debes ${fmt$(v.debe)}</span>`}</div>
     ${v.nota?`<div class="sub">${esc(v.nota)}</div>`:''}
   </div>`;
 }
 function vInicio(){
   const todas=ventasDe(S.hoy), vs=todas.filter(v=>!v.paraSi), mias=todas.filter(v=>v.paraSi), sal=saldo(), J=esc(JEFE());
-  const gana=suma(vs,v=>v.gana), env=suma(vs,v=>v.envio), cob=suma(vs,v=>v.total);
-  const debeVentas=suma(vs,v=>v.debe), debeMias=suma(mias,v=>v.debe), debeHoy=debeVentas+debeMias, dioHoy=suma(entregasDe(S.hoy),e=>e.monto), antes=sal-debeHoy+dioHoy;
-  const ult=S.entregas.slice().sort(porHora)[0];
+  const gana=suma(vs,v=>v.gana), env=suma(vs,v=>v.envio), cob=suma(vs.filter(v=>v.cobro!=='dueno'),v=>v.total);
+  const debeVentas=suma(vs,v=>v.debe), debeMias=suma(mias,v=>v.debe), debeHoy=debeVentas+debeMias, dioHoy=suma(entregasDe(S.hoy).filter(e=>e.tipo!=='pago'),e=>e.monto), pagoHoy=suma(entregasDe(S.hoy).filter(e=>e.tipo==='pago'),e=>e.monto), antes=sal-debeHoy+dioHoy-pagoHoy;
+  const ult=S.entregas.filter(e=>e.tipo!=='pago').sort(porHora)[0], viaje=porViaje();
   const ps=prodsActivos().filter(p=>stock(p.id)!==0 || p.enVenta!==false && !p.soloCaja);
   const chips=ps.map(p=>{ const n=stock(p.id); return `<span class="chip ${n<=0?'bad':''}"><b>${n}</b>${esc(nombreProd(p.id))}</span>`; }).join('');
   const lista = todas.length ? `<div class="list">${todas.slice(0,3).map(filaVenta).join('')}</div>` : `<div class="empty"><span>Todavía no registras ventas hoy. Toca <b>Registrar venta</b> cuando vendas algo.</span></div>`;
   return `
   <section class="hero" aria-label="Lo que le debes a ${J}">
-    <span class="lbl">${sal>=0?'Le debes a '+J:'Tienes a tu favor'}</span>
+    <span class="lbl">${sal>=0?'Le debes a '+J:viaje?J+' te debe':'Tienes a tu favor'}</span>
     <span class="amt">${fmt$(Math.abs(sal))}</span>
-    <span class="meta">${sal>=0?'Es el dinero de tus ventas que todavía no le das.':'Le diste más de lo que le debías.'}</span>
-    <div class="cuenta">
+    <span class="meta">${sal>=0?(viaje?'Lo que cobraste de productos y no le has dado, ya con tus viajes descontados.':'Es el dinero de tus ventas que todavía no le das.'):(viaje?'Tus viajes y envíos que todavía no te paga.':'Le diste más de lo que le debías.')}</span>
+    ${viaje?'':`<div class="cuenta">
       <div><span>Te faltaba de antes</span><b>${fmt$(antes)}</b></div>
       <div><span>+ De tus ventas de hoy</span><b>${fmt$(debeVentas)}</b></div>
       ${debeMias?`<div><span>+ Tus botellas de hoy</span><b>${fmt$(debeMias)}</b></div>`:''}
       <div><span>− Le diste hoy</span><b>${fmt$(dioHoy)}</b></div>
-    </div>
+      ${pagoHoy?`<div><span>+ Te pagó hoy</span><b>${fmt$(pagoHoy)}</b></div>`:''}
+    </div>`}
     ${ult?`<span class="meta">La última vez que le diste dinero fue el ${esc(diaLargo(ult.dia))}: ${fmt$(ult.monto)}.</span>`:''}
   </section>
   <div class="stats">
-    <div class="stat"><span class="lbl">Tu ganancia hoy</span><b class="okc">${fmt$(gana)}</b><span class="sub">${env&&envioSuyo()?'Incluye '+fmt$(env)+' de envíos':env?'Sin contar envíos':'Sin envíos hoy'}</span></div>
+    <div class="stat"><span class="lbl">Tu ganancia hoy</span><b class="okc">${fmt$(gana)}</b><span class="sub">${viaje?'Tus viajes'+(env?' y envíos':''):env&&envioSuyo()?'Incluye '+fmt$(env)+' de envíos':env?'Sin contar envíos':'Sin envíos hoy'}</span></div>
     <div class="stat"><span class="lbl">Cobraste hoy</span><b>${fmt$(cob)}</b><span class="sub">${vs.length} ${plural(vs.length,'venta','ventas')}</span></div>
   </div>
-  <button class="btn block" data-a="tab" data-t="vender">Registrar venta</button>
+  ${viaje?'':'<button class="btn block" data-a="tab" data-t="vender">Registrar venta</button>'}
   ${prodsPropios().length?'<button class="btn block ghost" data-a="propio">Botella para mí</button>':''}
   <section class="block"><div class="head-row"><span class="lbl">Lo que traes</span><button class="linkbtn" data-a="tab" data-t="traigo">Ver detalle</button></div><div class="chips">${chips||'<span class="sub">No traes mercancía.</span>'}</div></section>
   <section class="block"><div class="head-row"><span class="lbl">Tus ventas de hoy</span>${todas.length>3?'<button class="linkbtn" data-a="tab" data-t="dias">Ver todas</button>':''}</div>${lista}</section>
@@ -431,6 +437,7 @@ async function guardarPropio(){
 }
 function vVender(){
   if(S.modo==='propio' && prodsPropios().length) return vPropio();
+  if(porViaje()) return `${modoHtml()}<section class="block"><h2 class="h2">Tus ventas</h2><span class="sub">Tus ventas las anota ${esc(JEFE())} desde su app, con tu viaje y tu envío. Las vas a ver en Inicio y en Mis días con lo que ganaste.</span></section><button class="btn block ghost" data-a="tab" data-t="dias">Ver mis días</button>`;
   const v=S.venta, c=calc(v.lineas, v.envio), falt=faltantes(piezasDe(v.lineas)), J=esc(JEFE());
   const promos=promosActivas().map(k=>`<button class="pbtn promo" data-a="addk" data-id="${esc(k.id)}"><span class="pn">${esc(k.nombre)}</span><span class="q">${esc(compTxt(k))}</span><span class="gn">${comPromo(k)?'Ganas '+fmt$(comPromo(k)):'Sin comisión'}</span><span class="pr">${fmt$(k.precio)}</span></button>`).join('');
   const prods=prodsVenta().map(p=>{ const n=stock(p.id), cm=comDe(p.id);
@@ -528,8 +535,8 @@ function vTraigo(){
 }
 function vDias(){
   const d=S.dia, vs=ventasDe(d), es=entregasDe(d), J=esc(JEFE()), cli=vs.filter(v=>!v.paraSi), mias=vs.filter(v=>v.paraSi);
-  const cob=suma(cli,v=>v.total), gana=suma(cli,v=>v.gana), env=suma(cli,v=>v.envio), debe=suma(vs,v=>v.debe), ent=suma(es,e=>e.monto), propio=suma(mias,v=>v.debe);
-  const entHtml = es.length ? `<section class="block"><div class="lbl">Dinero que le entregaste a ${J}</div><div class="list">${es.map(e=>`<div class="vrow"><div class="vrow-top"><span class="pn">Entrega</span><span class="sub">${esc(horaDe(e.hora))}</span><span class="money">${fmt$(e.monto)}</span></div>${e.nota?`<div class="sub">${esc(e.nota)}</div>`:''}</div>`).join('')}</div></section>` : '';
+  const cob=suma(cli.filter(v=>v.cobro!=='dueno'),v=>v.total), gana=suma(cli,v=>v.gana), env=suma(cli,v=>v.envio), debe=suma(vs,v=>v.debe), ent=suma(es.filter(e=>e.tipo!=='pago'),e=>e.monto), pag=suma(es.filter(e=>e.tipo==='pago'),e=>e.monto), propio=suma(mias,v=>v.debe);
+  const entHtml = es.length ? `<section class="block"><div class="lbl">Dinero con ${J}</div><div class="list">${es.map(e=>`<div class="vrow"><div class="vrow-top"><span class="pn">${e.tipo==='pago'?'Te pagó':'Le diste'}</span><span class="sub">${esc(horaDe(e.hora))}</span><span class="money">${fmt$(e.monto)}</span></div>${e.nota?`<div class="sub">${esc(e.nota)}</div>`:''}</div>`).join('')}</div></section>` : '';
   return `
   <section class="block">
     <h2 class="h2">Mis días</h2>
@@ -539,8 +546,9 @@ function vDias(){
   <section class="card"><div class="totals">
     <div><span class="lbl">Cobraste</span><b>${fmt$(cob)}</b></div>
     <div><span class="lbl">Ganaste</span><b class="okc">${fmt$(gana)}</b>${env&&envioSuyo()?`<span class="sub">con ${fmt$(env)} de envíos</span>`:''}</div>
-    <div><span class="lbl">De este día le debes</span><b>${fmt$(debe)}</b>${propio?`<span class="sub">con ${fmt$(propio)} de tus botellas</span>`:''}</div>
+    <div><span class="lbl">${debe>=0?'De este día le debes':'De este día te debe'}</span><b>${fmt$(Math.abs(debe))}</b>${propio?`<span class="sub">con ${fmt$(propio)} de tus botellas</span>`:''}</div>
     ${ent?`<div><span class="lbl">Le entregaste</span><b>${fmt$(ent)}</b></div>`:''}
+    ${pag?`<div><span class="lbl">Te pagó</span><b>${fmt$(pag)}</b></div>`:''}
   </div></section>
   <section class="block"><div class="lbl">Ventas (${vs.length})</div>${vs.length?`<div class="list">${vs.map(filaVenta).join('')}</div>`:'<div class="empty"><span>No hay ventas este día.</span></div>'}</section>
   ${entHtml}

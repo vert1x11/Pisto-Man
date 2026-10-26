@@ -32,9 +32,9 @@ service cloud.firestore {
     }
     match /repVentas/{id} {
       allow read: if isAdmin() || (isRep() && resource.data.rep == myLoc());
-      allow create: if isRep() && request.resource.data.rep == myLoc()
+      allow create: if isAdmin() || (isRep() && request.resource.data.rep == myLoc()
                     && request.resource.data.absorbida == false
-                    && request.resource.data.borrada == false;
+                    && request.resource.data.borrada == false);
       allow update, delete: if isAdmin();
     }
     match /repEntregas/{id} {
