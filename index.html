@@ -567,8 +567,20 @@ function subColeccion(nombre, clave){
     S[clave]=o; S.cargado[clave]=true;
     if(S.cargado.prods && S.cargado.promos && S.cargado.ubic && S.estado==='cargando') S.estado='listo';
     if(clave==='prods' || clave==='cat') syncCatalogoRep();
+    if(clave==='ubic') ajustesUnaVez();
     pedirRender();
   }, onErr));
+}
+/* ajuste que pidió Kevin (26-oct-2026) y se aplica solo una vez: el Repartidor 2 es Yahir y se le paga por viaje */
+let ajustesHechos=false;
+function ajustesUnaVez(){
+  if(ajustesHechos) return;
+  const r=S.ubic.rep2;
+  if(r && r.tipo==='rep' && r.nombre==='Repartidor 2' && !r.pago){
+    ajustesHechos=true;
+    S.db.doc('ubicaciones/rep2').update({nombre:'Yahir', pago:'viaje'});
+    toast('Listo: Repartidor 2 ahora es Yahir y le pagas por viaje.');
+  }
 }
 /* copia del catálogo SIN costos para la app de repartidores */
 const CAMPOS_REP=['nombre','presentacion','categoria','precio','porCaja','soloCaja','enVenta','activo','orden'];
