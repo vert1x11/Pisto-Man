@@ -220,6 +220,8 @@ table.inv{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;
 .vrow-top{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .vrow-top .money{margin-left:auto;font-size:21px}
 .vlines{font-size:14px}
+.vacc{display:flex;gap:18px;flex-wrap:wrap}
+.aviso.editando{background:var(--surface-2);color:var(--ink);display:flex;flex-direction:column;gap:8px;align-items:flex-start;border:1.5px solid var(--line)}
 .confirm{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13.5px;font-weight:600;color:var(--bad)}
 .linkbtn{appearance:none;border:0;background:none;color:var(--muted);font-size:13px;font-weight:650;cursor:pointer;padding:4px 0;text-decoration:underline;text-underline-offset:3px;justify-self:start}
 .split{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -550,7 +552,9 @@ function regaloBtns(){
   const refs=prodsActivos().filter(p=>p.categoria==='refresco');
   return refs.length ? `<div class="actions">${refs.map(p=>`<button class="mini" data-a="regalo" data-id="${esc(p.id)}">+ ${esc(nombreProd(p.id))} de regalo</button>`).join('')}</div>` : '';
 }
-function faltantes(loc,pz){ const f=[]; for(const pid in pz){ const hay=stockDe(loc,pid); if(pz[pid]>hay) f.push({pid,hay,pide:pz[pid]}); } return f; }
+function faltantes(loc,pz){ const back=regresanAlEditar(loc); const f=[]; for(const pid in pz){ const hay=stockDe(loc,pid)+(back[pid]||0); if(pz[pid]>hay) f.push({pid,hay,pide:pz[pid]}); } return f; }
+/* al editar una venta, lo que esa venta había sacado vuelve a contar como disponible */
+function regresanAlEditar(loc){ const v=S.venta, o=v&&v.editOrig, c=o&&o.cambios&&o.cambios[loc], r={}; if(c) for(const pid in c) r[pid]=-(Number(c[pid])||0); return r; }
 const totalVenta = () => S.venta.lineas.reduce((s,l)=>s+(Number(l.cant)||0)*(Number(l.precio)||0),0);
 const totalCobrar = () => totalVenta() + Math.max(0, Number(S.venta.envio)||0);
 
@@ -833,11 +837,13 @@ function vVender(){
       ${porViaje?`<div id="v-cuenta">${cuentaViaje()}</div>`:''}
       <div id="v-ajeno">${ajenoTicket()}</div>
       <div id="v-aviso">${aviso}</div>
-      <button class="btn block money-btn" id="v-guardar" data-a="guardar">${falt.length?'Guardar aunque falte':'Guardar venta'}</button>
+      <button class="btn block money-btn" id="v-guardar" data-a="guardar">${v.editOrig?'Guardar cambios':falt.length?'Guardar aunque falte':'Guardar venta'}</button>
     </section>` : `<div class="empty"><span>Toca una promo o un producto para agregarlo a la venta. Se resta solo del inventario de quien vendió.</span></div>`;
+  const ed=v.editOrig;
   return `
   <section class="block">
-    <h2 class="h2">Registrar venta</h2>
+    <h2 class="h2">${ed?'Editar venta':'Registrar venta'}</h2>
+    ${ed?`<div class="aviso editando">Estás cambiando la venta de ${esc(nombreVend(ed.vend))} de las ${esc(horaDe(ed.hora))} del ${esc(diaLargo(v.editDia))}. Al guardar se corrige solo el inventario${ed.debe!=null||esRep(v.vend)?' y lo que te deben':''}.<button class="btn small ghost" data-a="canceled">Cancelar cambios</button></div>`:''}
     <div class="field"><span class="lbl">¿Quién vendió?</span><div class="seg" role="group" aria-label="Quién vendió">${us.map(u=>`<button class="segb ${v.vend===u.id?'on':''}" data-a="vend" data-id="${esc(u.id)}" aria-pressed="${v.vend===u.id}">${esc(u.nombre)}</button>`).join('')}</div></div>
     ${rep?'<span class="sub">Los repartidores venden por pieza y promos. Las cajas las vendes tú.</span>':''}
     <div class="field" ${rep?'hidden':''}><span class="lbl">Tipo de venta</span><div class="seg" role="group" aria-label="Tipo de venta">
@@ -878,7 +884,7 @@ function actualizarTotal(){
   const aj=document.getElementById('v-ajeno'); if(aj) aj.innerHTML=ajenoTicket();
   const falt=faltantes(v.vend, piezasDe(v.lineas));
   const av=document.getElementById('v-aviso'); if(av) av.innerHTML=avisoVenta(nombreVend(v.vend), falt);
-  const g=document.getElementById('v-guardar'); if(g) g.textContent=falt.length?'Guardar aunque falte':'Guardar venta';
+  const g=document.getElementById('v-guardar'); if(g) g.textContent=v.editOrig?'Guardar cambios':falt.length?'Guardar aunque falte':'Guardar venta';
 }
 function agregarLinea(t,id){
   const v=S.venta; const ex=v.lineas.find(l=>l.t===t && l.id===id);
@@ -899,10 +905,11 @@ async function guardarVenta(){
   if(!lineas.length){ toast('Agrega al menos un producto o promo.'); return; }
   const salen=piezasDe(lineas), regalos=regalosDe(lineas), piezas=restar(salen, regalos), cv=calcVenta(v.vend, lineas, v.envio, v.viaje, v.cobro), total=cv.total;
   const cambios={}; cambios[v.vend]={}; for(const pid in salen) cambios[v.vend][pid]=-salen[pid];
-  const id=uid('v'), dia=v.dia||S.hoy;
+  const ed=v.editOrig, id=ed?v.editId:uid('v'), dia=v.dia||S.hoy;
+  if(ed && soloCambioNota(ed, v)){ await guardarNota(v.editId, v.editDia, ed, String(v.nota||'').trim()); salirEdicion(true); return; }
   const aj=ajenoDe(lineas);
   lineas.forEach((l,i)=>{ const d=cv.rep?cv.det[i]:null, base = d ? l.cant*Math.max(0,d.lista-d.com) : l.cant*l.precio; l.ingreso=Math.round((base-ajenoLinea(l))*100)/100; });
-  const venta={id, dia, hora:new Date().toISOString(), vend:v.vend, vendNombre:nombreVend(v.vend), modo:v.modo, lineas, total, envio:cv.envio, envioTuyo:(cv.rep&&cv.envioSuyo)?0:cv.envio, ajeno:aj.tot, ajenoDetalle:aj.det, piezas, regalos, cambios, nota:String(v.nota||'').trim()};
+  const venta={id, dia, hora:ed?ed.hora:new Date().toISOString(), vend:v.vend, vendNombre:nombreVend(v.vend), modo:v.modo, lineas, total, envio:cv.envio, envioTuyo:(cv.rep&&cv.envioSuyo)?0:cv.envio, ajeno:aj.tot, ajenoDetalle:aj.det, piezas, regalos, cambios, nota:String(v.nota||'').trim()};
   let msg='Venta guardada · '+fmt$(total);
   if(cv.rep){
     cv.det.forEach((d,i)=>{ lineas[i].lista=d.lista; lineas[i].com=d.com; });
@@ -910,8 +917,62 @@ async function guardarVenta(){
     if(cv.porViaje){ venta.pagoRep='viaje'; venta.viaje=cv.viaje; venta.cobro=cv.cobro; venta.envioTuyo=0; }
     msg+=' · '+nombreVend(v.vend)+(cv.debe>=0?' te debe '+fmt$(cv.debe):' · le debes '+fmt$(-cv.debe));
   } else if(aj.tot){ msg+=' ('+fmt$(total-aj.tot)+' tuyos)'; }
+  if(ed){
+    venta.editada=new Date().toISOString();
+    const ok=await intentar(async()=>{
+      await escribirDia(v.editDia,{ventas:{[id]:null}});
+      await escribirDia(dia,{ventas:{[id]:venta}});
+      await aplicar(ed.cambios||{},-1); await aplicar(cambios,1);
+      if(ed.debe!=null) await ajustarSaldo(ed.vend, -(Number(ed.debe)||0));
+      if(venta.debe!=null) await ajustarSaldo(venta.vend, venta.debe);
+      espejoRep(id, venta, ed);
+    }, 'Cambios guardados');
+    if(ok) salirEdicion(true);
+    return;
+  }
   const ok=await intentar(async()=>{ await escribirDia(dia,{ventas:{[id]:venta}}); await aplicar(cambios,1); if(venta.debe!=null){ await ajustarSaldo(v.vend, venta.debe); await S.db.doc('repVentas/'+id).set({id, rep:v.vend, dia, hora:venta.hora, venta, absorbida:true, borrada:false, origen:'dueno'}); } }, msg);
   if(ok){ v.lineas=[]; v.nota=''; v.envio=0; v.viaje=0; v.cobro='rep'; render(); window.scrollTo({top:0,behavior:'smooth'}); }
+}
+
+/* --- Editar una venta --- */
+/* ventas que no se pueden rehacer con la pantalla de Vender (botella para él, ventas viejas con costo propio): solo se cambia la nota */
+const soloNota = v => !!(v.paraSi || (v.lineas||[]).some(l=>l.cu!=null || l.propio));
+function editarVenta(id){
+  const d=S.diaHist, v=d&&d.ventas&&d.ventas[id]; if(!v) return;
+  if(soloNota(v)){ abrirSheet({tipo:'nota', id, dia:S.histDia}); return; }
+  S.venta={vend:v.vend, modo:v.modo||'menudeo', dia:v.dia||S.histDia, nota:v.nota||'', envio:Number(v.envio)||0, viaje:Number(v.viaje)||0, cobro:v.cobro==='dueno'?'dueno':'rep',
+    lineas:(v.lineas||[]).map(l=>({t:l.t, id:l.id, cant:Number(l.cant)||0, precio:Number(l.precio)||0, manual:true})),
+    editId:id, editDia:S.histDia, editOrig:JSON.parse(JSON.stringify(v))};
+  irTab('vender');
+}
+function salirEdicion(volver){
+  S.venta={vend:S.venta.vend||'bodega', modo:'menudeo', dia:S.hoy, lineas:[], nota:'', envio:0, viaje:0, cobro:'rep'};
+  if(volver) irTab('hist'); else render();
+}
+function soloCambioNota(o, v){
+  const a=(o.lineas||[]).map(l=>[l.t,l.id,Number(l.cant)||0,Number(l.precio)||0].join('|')).join(';');
+  const b=v.lineas.filter(l=>(Number(l.cant)||0)>0).map(l=>[l.t,l.id,Math.round(Number(l.cant)),Number(l.precio)||0].join('|')).join(';');
+  return a===b && o.vend===v.vend && (o.modo||'menudeo')===v.modo && (o.dia||v.editDia)===v.dia && (Number(o.envio)||0)===(Number(v.envio)||0)
+    && (!esViaje(o) || ((Number(o.viaje)||0)===(Number(v.viaje)||0) && (o.cobro==='dueno'?'dueno':'rep')===v.cobro));
+}
+async function guardarNota(id, dia, o, nota){
+  const ok=await intentar(async()=>{ await escribirDia(dia,{ventas:{[id]:{nota}}}); if(o.debe!=null) espejoRep(id, Object.assign({}, o, {nota}), o); }, 'Nota guardada');
+  return ok;
+}
+/* la copia que ve el repartidor en su app: se reemplaza completa (o se marca borrada si ya no es suya) */
+function espejoRep(id, venta, antes){
+  const ref=PM.db.fs.collection('repVentas').doc(id);
+  ref.get().then(s=>{
+    const prev=s.exists?s.data():null;
+    if(venta.debe!=null && esRep(venta.vend)) return ref.set({id, rep:venta.vend, dia:venta.dia, hora:venta.hora, venta:PM.db.limpiar(venta), absorbida:true, borrada:false, origen:(prev&&prev.origen)||'dueno'});
+    if(prev) return ref.update({borrada:true});
+  }).catch(e=>console.warn('espejo', e));
+}
+function sheetNota(s){
+  const v=S.diaHist&&S.diaHist.ventas&&S.diaHist.ventas[s.id];
+  return `${cabeza('Editar nota', v&&v.paraSi?'En las botellas para tu repartidor solo se cambia la nota. Si algo más está mal, bórrala y que la anote otra vez.':'En esta venta solo se puede cambiar la nota. Si algo más está mal, bórrala y anótala otra vez.')}
+    <label class="field"><span class="lbl">Nota</span><input id="n-nota" value="${esc(v?v.nota||'':'')}" placeholder="Ej. Juan, colonia Centro"></label>
+    <div class="sheet-actions"><button class="btn ghost" data-a="cerrar">Cancelar</button><button class="btn" data-a="guardarn">Guardar</button></div>`;
 }
 
 /* --- Inventario --- */
@@ -988,7 +1049,7 @@ function vHist(){
       <div class="vlines">${lineasTxt(v)}</div>
       ${cobroTxt(v)?`<div class="sub">${cobroTxt(v)}</div>`:''}
       ${v.nota?`<div class="sub">${esc(v.nota)}</div>`:''}
-      ${conf ? `<div class="confirm">¿Borrar esta venta? Lo vendido regresa al inventario de ${esc(nombreLoc(v.vend))}.<button class="btn small danger" data-a="siborrarv" data-id="${esc(v.id)}">Sí, borrar</button><button class="btn small ghost" data-a="nobor">No</button></div>` : `<button class="linkbtn" data-a="borrarv" data-id="${esc(v.id)}">Borrar venta</button>`}
+      ${conf ? `<div class="confirm">¿Borrar esta venta? Lo vendido regresa al inventario de ${esc(nombreLoc(v.vend))}.<button class="btn small danger" data-a="siborrarv" data-id="${esc(v.id)}">Sí, borrar</button><button class="btn small ghost" data-a="nobor">No</button></div>` : `<div class="vacc"><button class="linkbtn" data-a="editv" data-id="${esc(v.id)}">Editar venta</button><button class="linkbtn" data-a="borrarv" data-id="${esc(v.id)}">Borrar venta</button></div>`}
     </div>`;
   }).join('')}</div>` : `<div class="empty"><span>${d?'No hay ventas registradas este día'+(vf!=='todos'?' para '+esc(nombreVend(vf)):'')+'.':'Cargando…'}</span></div>`;
   const movsHtml = movs.length ? `<section class="block"><div class="lbl">Movimientos de mercancía</div><div class="list">${movs.map(m=>{
@@ -1276,6 +1337,7 @@ function renderSheet(){
   else if(s.tipo==='ubic') sheetEl.innerHTML=sheetUbic(s);
   else if(s.tipo==='entrega') sheetEl.innerHTML=sheetEntrega(s);
   else if(s.tipo==='gasto') sheetEl.innerHTML=sheetGasto();
+  else if(s.tipo==='nota') sheetEl.innerHTML=sheetNota(s);
 }
 function comisionEditor(u){
   const ac=tieneAcuerdo(u), com=(u&&u.comision)||{}, nm=u?esc(u.nombre):'El repartidor';
@@ -1545,6 +1607,9 @@ const A = {
   hhoy: () => { S.histDia=S.hoy; S.confirmar=null; subDia('hist'); render(); },
   hvend: d => { S.histVend=d.id; render(); },
   borrarv: d => { S.confirmar='v:'+d.id; render(); },
+  editv: d => editarVenta(d.id),
+  canceled: () => salirEdicion(true),
+  guardarn: async () => { const s=S.sheet, v=S.diaHist&&S.diaHist.ventas&&S.diaHist.ventas[s.id]; if(!v) return; const ok=await guardarNota(s.id, s.dia, v, document.getElementById('n-nota').value.trim()); if(ok) cerrarSheet(); },
   borrarm: d => { S.confirmar='m:'+d.id; render(); },
   nobor: () => { S.confirmar=null; render(); },
   siborrarv: d => borrarVenta(d.id),
