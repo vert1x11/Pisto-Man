@@ -346,7 +346,7 @@ const S = {
   prods:{}, promos:{}, ubic:{}, cargado:{prods:false,promos:false,ubic:false,cat:false},
   hoy:hoyStr(), diaHoy:null, histDia:hoyStr(), diaHist:null,
   tab:'hoy', invLoc:'todo', histVend:'todos', confirmar:null, mes:null, gPer:'mes', gDocs:null, gKey:null,
-  venta:{vend:'bodega', modo:'menudeo', dia:hoyStr(), lineas:[], nota:'', envio:0, viaje:0, cobro:'rep'},
+  venta:{vend:'bodega', modo:'menudeo', dia:hoyStr(), lineas:[], nota:'', envio:0, viaje:0, cobro:'rep', desde:'rep'},
   sheet:null, pendiente:false
 };
 try{ const t=localStorage.getItem('pm-tab'); if(t && ['hoy','vender','inv','gan','hist','cat'].includes(t)) S.tab=t; }catch(e){}
@@ -394,6 +394,8 @@ function ajenoDe(lineas){
 /* repartidor que cobra por viaje (Yahir): no gana comisión; en cada venta se anota el viaje y el envío que paga el cliente (todo el envío es de él) */
 const pagaViaje = u => !!(u && u.pago==='viaje');
 const esViaje = v => !!(v && v.pagoRep==='viaje');
+/* de dónde sale la mercancía: normalmente de quien vendió; en mayoreo de un repartidor por viaje se puede sacar de la bodega */
+const origenVenta = v => (v && v.modo==='mayoreo' && v.desde==='bodega' && esRep(v.vend) && pagaViaje(S.ubic[v.vend])) ? idBodega() : v.vend;
 const netoDe = v => esViaje(v) ? (Number(v.total)||0)-(Number(v.envio)||0)-(Number(v.ajeno)||0) : (v.debe!=null ? (Number(v.debe)||0) : (Number(v.total)||0)) - (Number(v.ajeno)||0);
 const ganaDe = v => esViaje(v) ? (Number(v.viaje)||0)+(Number(v.envio)||0) : v.debe!=null ? (Number(v.total)||0) - (Number(v.debe)||0) : 0;
 const esRep = id => !!(S.ubic[id] && S.ubic[id].tipo==='rep');
@@ -471,6 +473,7 @@ function cobroTxt(v){
     const nm=esc(v.vendNombre||nombreVend(v.vend)), d=Number(v.debe)||0;
     const p=[v.cobro==='dueno' ? 'Te pagaron a ti '+fmt$(v.total) : nm+' cobró '+fmt$(v.total), 'viaje '+fmt$(v.viaje)];
     if(Number(v.envio)>0) p.push('envío '+fmt$(v.envio)+' para '+nm);
+    if(v.desde && v.desde===idBodega()) p.push('salió de tu bodega');
     p.push(d>=0 ? 'te debe '+fmt$(d) : 'le debes '+fmt$(-d));
     if(aj) p.push(ajenoTxt(v.ajenoDetalle));
     return p.join(' · ');
@@ -782,13 +785,12 @@ function vVender(){
   const v=S.venta, us=ubicActivas(), ps=prodsActivos(), ks=promosActivas();
   if(!ps.length) return vacioCatalogo();
   if(!S.ubic[v.vend] && us[0]) v.vend=us[0].id;
-  const rep=esRep(v.vend); if(rep) v.modo='menudeo';
-  const porViaje=rep && pagaViaje(S.ubic[v.vend]);
-  const pz=piezasDe(v.lineas), falt=faltantes(v.vend,pz), total=totalCobrar();
-  const quien=nombreVend(v.vend);
+  const rep=esRep(v.vend), porViaje=rep && pagaViaje(S.ubic[v.vend]); if(rep && !porViaje) v.modo='menudeo';
+  const src=origenVenta(v), pz=piezasDe(v.lineas), falt=faltantes(src,pz), total=totalCobrar();
+  const quien=nombreVend(v.vend), deQuien=nombreLoc(src);
   const promosHtml = ks.length ? `<section class="block"><div class="lbl">Promos</div><div class="pgrid">${ks.map(k=>`<button class="pbtn promo" data-a="addk" data-id="${esc(k.id)}"><span class="pn">${esc(k.nombre)}</span><span class="q">${esc(compTxt(k))}</span><span class="pr">${fmt$(k.precio)}</span></button>`).join('')}</div></section>` : '';
-  const prodsHtml = `<section class="block"><div class="lbl">Productos · lo que le queda a ${esc(quien)}</div><div class="pgrid">${ps.filter(p=>p.enVenta!==false && !(rep && p.soloCaja)).map(p=>{
-    const n=stockDe(v.vend,p.id), porCj = ventaPorCaja(p, v.modo);
+  const prodsHtml = `<section class="block"><div class="lbl">Productos · lo que le queda ${src===idBodega()?'en tu bodega':'a '+esc(deQuien)}</div><div class="pgrid">${ps.filter(p=>p.enVenta!==false && !(rep && !porViaje && p.soloCaja)).map(p=>{
+    const n=stockDe(src,p.id), porCj = ventaPorCaja(p, v.modo);
     const pr = porCj ? Number(p.precioCaja) : precioPara(p), ct=cajasTxt(n,p);
     const qd = `<span class="q ${n<=0?'bad':''}">${n<=0?'Agotado':'Quedan '+n+(ct?' ('+esc(ct)+')':'')}</span>`;
     if(v.modo==='mayoreo' && tieneCaja(p) && !p.soloCaja){
@@ -814,7 +816,7 @@ function vVender(){
       </div>
     </div>`;
   }).join('');
-  const aviso = avisoVenta(quien, falt);
+  const aviso = avisoVenta(deQuien, falt);
   const ticket = v.lineas.length ? `
     <section class="ticket" aria-label="Venta actual">
       <div class="head-row"><span class="lbl">Venta de ${esc(quien)} · ${v.modo==='mayoreo'?'Mayoreo':'Menudeo'}</span><button class="linkbtn" data-a="limpiar">Vaciar</button></div>
@@ -845,11 +847,15 @@ function vVender(){
     <h2 class="h2">${ed?'Editar venta':'Registrar venta'}</h2>
     ${ed?`<div class="aviso editando">Estás cambiando la venta de ${esc(nombreVend(ed.vend))} de las ${esc(horaDe(ed.hora))} del ${esc(diaLargo(v.editDia))}. Al guardar se corrige solo el inventario${ed.debe!=null||esRep(v.vend)?' y lo que te deben':''}.<button class="btn small ghost" data-a="canceled">Cancelar cambios</button></div>`:''}
     <div class="field"><span class="lbl">¿Quién vendió?</span><div class="seg" role="group" aria-label="Quién vendió">${us.map(u=>`<button class="segb ${v.vend===u.id?'on':''}" data-a="vend" data-id="${esc(u.id)}" aria-pressed="${v.vend===u.id}">${esc(u.nombre)}</button>`).join('')}</div></div>
-    ${rep?'<span class="sub">Los repartidores venden por pieza y promos. Las cajas las vendes tú.</span>':''}
-    <div class="field" ${rep?'hidden':''}><span class="lbl">Tipo de venta</span><div class="seg" role="group" aria-label="Tipo de venta">
+    ${rep&&!porViaje?'<span class="sub">Los repartidores venden por pieza y promos. Las cajas las vendes tú.</span>':''}
+    <div class="field" ${rep&&!porViaje?'hidden':''}><span class="lbl">Tipo de venta</span><div class="seg" role="group" aria-label="Tipo de venta">
       <button class="segb ${v.modo==='menudeo'?'on':''}" data-a="modo" data-m="menudeo" aria-pressed="${v.modo==='menudeo'}">Menudeo</button>
       <button class="segb ${v.modo==='mayoreo'?'on':''}" data-a="modo" data-m="mayoreo" aria-pressed="${v.modo==='mayoreo'}">Mayoreo</button></div>
       ${v.modo==='mayoreo'?'<span class="sub">En mayoreo puedes agregar cajas y también botellas sueltas en la misma venta. El descuento por cantidad de cajas se pone solo.</span>':''}</div>
+    ${porViaje && v.modo==='mayoreo'?`<div class="field"><span class="lbl">¿De dónde salen las cajas?</span><div class="seg" role="group" aria-label="De dónde salen las cajas">
+      <button class="segb ${v.desde!=='bodega'?'on':''}" data-a="desde" data-d="rep" aria-pressed="${v.desde!=='bodega'}">De lo que trae ${esc(quien)}</button>
+      <button class="segb ${v.desde==='bodega'?'on':''}" data-a="desde" data-d="bodega" aria-pressed="${v.desde==='bodega'}">De tu bodega</button></div>
+      <span class="sub">${v.desde==='bodega'?'Se restan de tu bodega. '+esc(quien)+' solo las lleva y te cobra el viaje.':'Se restan de lo que le cargaste a '+esc(quien)+'.'}</span></div>`:''}
     <label class="field"><span class="lbl">Día de la venta</span><input type="date" id="v-dia" value="${esc(v.dia)}" max="${esc(S.hoy)}"></label>
   </section>
   ${ticket}
@@ -882,8 +888,8 @@ function actualizarTotal(){
   const t=document.getElementById('v-total'); if(t) t.textContent=fmt$(totalCobrar());
   const cu=document.getElementById('v-cuenta'); if(cu) cu.innerHTML=cuentaViaje();
   const aj=document.getElementById('v-ajeno'); if(aj) aj.innerHTML=ajenoTicket();
-  const falt=faltantes(v.vend, piezasDe(v.lineas));
-  const av=document.getElementById('v-aviso'); if(av) av.innerHTML=avisoVenta(nombreVend(v.vend), falt);
+  const src=origenVenta(v), falt=faltantes(src, piezasDe(v.lineas));
+  const av=document.getElementById('v-aviso'); if(av) av.innerHTML=avisoVenta(nombreLoc(src), falt);
   const g=document.getElementById('v-guardar'); if(g) g.textContent=v.editOrig?'Guardar cambios':falt.length?'Guardar aunque falte':'Guardar venta';
 }
 function agregarLinea(t,id){
@@ -904,12 +910,13 @@ async function guardarVenta(){
   }));
   if(!lineas.length){ toast('Agrega al menos un producto o promo.'); return; }
   const salen=piezasDe(lineas), regalos=regalosDe(lineas), piezas=restar(salen, regalos), cv=calcVenta(v.vend, lineas, v.envio, v.viaje, v.cobro), total=cv.total;
-  const cambios={}; cambios[v.vend]={}; for(const pid in salen) cambios[v.vend][pid]=-salen[pid];
+  const src=origenVenta(v), cambios={}; cambios[src]={}; for(const pid in salen) cambios[src][pid]=-salen[pid];
   const ed=v.editOrig, id=ed?v.editId:uid('v'), dia=v.dia||S.hoy;
   if(ed && soloCambioNota(ed, v)){ await guardarNota(v.editId, v.editDia, ed, String(v.nota||'').trim()); salirEdicion(true); return; }
   const aj=ajenoDe(lineas);
   lineas.forEach((l,i)=>{ const d=cv.rep?cv.det[i]:null, base = d ? l.cant*Math.max(0,d.lista-d.com) : l.cant*l.precio; l.ingreso=Math.round((base-ajenoLinea(l))*100)/100; });
   const venta={id, dia, hora:ed?ed.hora:new Date().toISOString(), vend:v.vend, vendNombre:nombreVend(v.vend), modo:v.modo, lineas, total, envio:cv.envio, envioTuyo:(cv.rep&&cv.envioSuyo)?0:cv.envio, ajeno:aj.tot, ajenoDetalle:aj.det, piezas, regalos, cambios, nota:String(v.nota||'').trim()};
+  if(src!==v.vend) venta.desde=src;
   let msg='Venta guardada · '+fmt$(total);
   if(cv.rep){
     cv.det.forEach((d,i)=>{ lineas[i].lista=d.lista; lineas[i].com=d.com; });
@@ -931,7 +938,7 @@ async function guardarVenta(){
     return;
   }
   const ok=await intentar(async()=>{ await escribirDia(dia,{ventas:{[id]:venta}}); await aplicar(cambios,1); if(venta.debe!=null){ await ajustarSaldo(v.vend, venta.debe); await S.db.doc('repVentas/'+id).set({id, rep:v.vend, dia, hora:venta.hora, venta, absorbida:true, borrada:false, origen:'dueno'}); } }, msg);
-  if(ok){ v.lineas=[]; v.nota=''; v.envio=0; v.viaje=0; v.cobro='rep'; render(); window.scrollTo({top:0,behavior:'smooth'}); }
+  if(ok){ v.lineas=[]; v.nota=''; v.envio=0; v.viaje=0; v.cobro='rep'; v.desde='rep'; render(); window.scrollTo({top:0,behavior:'smooth'}); }
 }
 
 /* --- Editar una venta --- */
@@ -940,19 +947,19 @@ const soloNota = v => !!(v.paraSi || (v.lineas||[]).some(l=>l.cu!=null || l.prop
 function editarVenta(id){
   const d=S.diaHist, v=d&&d.ventas&&d.ventas[id]; if(!v) return;
   if(soloNota(v)){ abrirSheet({tipo:'nota', id, dia:S.histDia}); return; }
-  S.venta={vend:v.vend, modo:v.modo||'menudeo', dia:v.dia||S.histDia, nota:v.nota||'', envio:Number(v.envio)||0, viaje:Number(v.viaje)||0, cobro:v.cobro==='dueno'?'dueno':'rep',
-    lineas:(v.lineas||[]).map(l=>({t:l.t, id:l.id, cant:Number(l.cant)||0, precio:Number(l.precio)||0, manual:true})),
+  S.venta={vend:v.vend, modo:v.modo||'menudeo', dia:v.dia||S.histDia, nota:v.nota||'', envio:Number(v.envio)||0, viaje:Number(v.viaje)||0, cobro:v.cobro==='dueno'?'dueno':'rep', desde:v.desde?'bodega':'rep',
+    lineas:(v.lineas||[]).map(l=>({t:l.t, id:l.id, cant:Number(l.cant)||0, precio:Number(l.precio)||0, manual: !(l.t==='c' && S.prods[l.id] && Number(l.precio)===precioCajaPara(S.prods[l.id], Number(l.cant)||0))})),
     editId:id, editDia:S.histDia, editOrig:JSON.parse(JSON.stringify(v))};
   irTab('vender');
 }
 function salirEdicion(volver){
-  S.venta={vend:S.venta.vend||'bodega', modo:'menudeo', dia:S.hoy, lineas:[], nota:'', envio:0, viaje:0, cobro:'rep'};
+  S.venta={vend:S.venta.vend||'bodega', modo:'menudeo', dia:S.hoy, lineas:[], nota:'', envio:0, viaje:0, cobro:'rep', desde:'rep'};
   if(volver) irTab('hist'); else render();
 }
 function soloCambioNota(o, v){
   const a=(o.lineas||[]).map(l=>[l.t,l.id,Number(l.cant)||0,Number(l.precio)||0].join('|')).join(';');
   const b=v.lineas.filter(l=>(Number(l.cant)||0)>0).map(l=>[l.t,l.id,Math.round(Number(l.cant)),Number(l.precio)||0].join('|')).join(';');
-  return a===b && o.vend===v.vend && (o.modo||'menudeo')===v.modo && (o.dia||v.editDia)===v.dia && (Number(o.envio)||0)===(Number(v.envio)||0)
+  return a===b && o.vend===v.vend && (o.desde||o.vend)===origenVenta(v) && (o.modo||'menudeo')===v.modo && (o.dia||v.editDia)===v.dia && (Number(o.envio)||0)===(Number(v.envio)||0)
     && (!esViaje(o) || ((Number(o.viaje)||0)===(Number(v.viaje)||0) && (o.cobro==='dueno'?'dueno':'rep')===v.cobro));
 }
 async function guardarNota(id, dia, o, nota){
@@ -1049,7 +1056,7 @@ function vHist(){
       <div class="vlines">${lineasTxt(v)}</div>
       ${cobroTxt(v)?`<div class="sub">${cobroTxt(v)}</div>`:''}
       ${v.nota?`<div class="sub">${esc(v.nota)}</div>`:''}
-      ${conf ? `<div class="confirm">¿Borrar esta venta? Lo vendido regresa al inventario de ${esc(nombreLoc(v.vend))}.<button class="btn small danger" data-a="siborrarv" data-id="${esc(v.id)}">Sí, borrar</button><button class="btn small ghost" data-a="nobor">No</button></div>` : `<div class="vacc"><button class="linkbtn" data-a="editv" data-id="${esc(v.id)}">Editar venta</button><button class="linkbtn" data-a="borrarv" data-id="${esc(v.id)}">Borrar venta</button></div>`}
+      ${conf ? `<div class="confirm">¿Borrar esta venta? Lo vendido regresa ${(v.desde||v.vend)===idBodega()?'a tu bodega':'al inventario de '+esc(nombreLoc(v.desde||v.vend))}.<button class="btn small danger" data-a="siborrarv" data-id="${esc(v.id)}">Sí, borrar</button><button class="btn small ghost" data-a="nobor">No</button></div>` : `<div class="vacc"><button class="linkbtn" data-a="editv" data-id="${esc(v.id)}">Editar venta</button><button class="linkbtn" data-a="borrarv" data-id="${esc(v.id)}">Borrar venta</button></div>`}
     </div>`;
   }).join('')}</div>` : `<div class="empty"><span>${d?'No hay ventas registradas este día'+(vf!=='todos'?' para '+esc(nombreVend(vf)):'')+'.':'Cargando…'}</span></div>`;
   const movsHtml = movs.length ? `<section class="block"><div class="lbl">Movimientos de mercancía</div><div class="list">${movs.map(m=>{
@@ -1580,6 +1587,7 @@ const A = {
   tab: d => irTab(d.t),
   vend: d => { S.venta.vend=d.id; render(); },
   modo: d => { S.venta.modo=d.m; render(); },
+  desde: d => { S.venta.desde = d.d==='bodega' ? 'bodega' : 'rep'; render(); },
   addp: d => { const p=S.prods[d.id]; agregarLinea(ventaPorCaja(p, S.venta.modo) ? 'c' : 'p', d.id); },
   addk: d => agregarLinea('k',d.id),
   addc: d => agregarLinea('c',d.id),
