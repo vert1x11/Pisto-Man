@@ -1395,7 +1395,8 @@ function sheetEntrega(s){
     <div class="seg" role="group" aria-label="Quién dio el dinero"><button class="segb ${!pago?'on':''}" data-a="edir" data-d="dio" aria-pressed="${!pago}">${nm} te dio</button><button class="segb ${pago?'on':''}" data-a="edir" data-d="pago" aria-pressed="${pago}">Tú le pagaste</button></div>
     <span class="sub">${pago?'Lo que le pagues se resta de lo que le debes (sus viajes, envíos o comisiones).':'Lo que te dé se resta de lo que te debe.'}</span>
     <label class="field"><span class="lbl">${pago?'¿Cuánto le pagaste?':'¿Cuánto te dio?'}</span><input id="e-monto" inputmode="decimal" value="${sug}" placeholder="$"></label>
-    <label class="field"><span class="lbl">Nota (opcional)</span><input id="e-nota" placeholder="${pago?'Ej. Viajes de la semana':'Ej. Corte del día'}"></label>
+    <label class="field"><span class="lbl">${pago?'¿Qué día le pagaste?':'¿Qué día te lo dio?'}</span><input type="date" id="e-fecha" value="${esc(s.fecha||S.hoy)}" max="${esc(S.hoy)}"></label>
+    <label class="field"><span class="lbl">Nota (opcional)</span><input id="e-nota" value="${esc(s.nota||'')}" placeholder="${pago?'Ej. Viajes de la semana':'Ej. Corte del día'}"></label>
     <div class="sheet-actions"><button class="btn ghost" data-a="cerrar">Cancelar</button><button class="btn" data-a="guardare">Guardar</button></div>`;
 }
 async function guardarEntrega(){
@@ -1403,9 +1404,13 @@ async function guardarEntrega(){
   const pago=s.dir==='pago';
   if(!(monto>0)){ toast(pago?'Escribe cuánto le pagaste.':'Escribe cuánto te dio.'); return; }
   const nota=document.getElementById('e-nota').value.trim(), id=uid('e');
-  const ent={id, hora:new Date().toISOString(), rep:s.rep, repNombre:nombreVend(s.rep), monto, nota}; if(pago) ent.tipo='pago';
-  const espejo={id, rep:s.rep, dia:S.hoy, hora:ent.hora, monto, nota}; if(pago) espejo.tipo='pago';
-  const ok=await intentar(async()=>{ await escribirDia(S.hoy,{entregas:{[id]:ent}}); await ajustarSaldo(s.rep, pago?monto:-monto); await S.db.doc('repEntregas/'+id).set(espejo); }, 'Guardado · '+(pago?'le pagaste '+fmt$(monto)+' a '+nombreVend(s.rep):nombreVend(s.rep)+' te dio '+fmt$(monto)));
+  /* el día que dio (o recibió) el dinero; si no es hoy, se guarda en ese día con la hora de ahorita */
+  const fv=(document.getElementById('e-fecha')||{}).value||'', dia=/^\d{4}-\d{2}-\d{2}$/.test(fv) && fv<=S.hoy ? fv : S.hoy;
+  const ahora=new Date(), pf=dia.split('-').map(Number);
+  const hora = dia===S.hoy ? ahora.toISOString() : new Date(pf[0], pf[1]-1, pf[2], ahora.getHours(), ahora.getMinutes()).toISOString();
+  const ent={id, hora, rep:s.rep, repNombre:nombreVend(s.rep), monto, nota}; if(pago) ent.tipo='pago';
+  const espejo={id, rep:s.rep, dia, hora, monto, nota}; if(pago) espejo.tipo='pago';
+  const ok=await intentar(async()=>{ await escribirDia(dia,{entregas:{[id]:ent}}); await ajustarSaldo(s.rep, pago?monto:-monto); await S.db.doc('repEntregas/'+id).set(espejo); }, 'Guardado · '+(pago?'le pagaste '+fmt$(monto)+' a '+nombreVend(s.rep):nombreVend(s.rep)+' te dio '+fmt$(monto))+(dia!==S.hoy?' · '+diaCorto(dia):''));
   if(ok) cerrarSheet();
 }
 async function borrarEntrega(id){
@@ -1666,7 +1671,7 @@ const A = {
   borrarg: d => { S.confirmar='g:'+d.id; render(); },
   siborrarg: d => borrarGasto(d.id),
   cobro: d => { S.venta.cobro = d.c==='dueno' ? 'dueno' : d.c==='mixto' ? 'mixto' : 'rep'; render(); if(S.venta.cobro==='mixto'){ const el=document.getElementById('v-ami'); if(el) el.focus(); } },
-  edir: d => { if(S.sheet){ S.sheet.dir = d.d==='pago' ? 'pago' : 'dio'; renderSheet(); } },
+  edir: d => { if(S.sheet){ const f=document.getElementById('e-fecha'), n=document.getElementById('e-nota'); if(f) S.sheet.fecha=f.value; if(n) S.sheet.nota=n.value; S.sheet.dir = d.d==='pago' ? 'pago' : 'dio'; renderSheet(); } },
   upago: d => { if(!S.sheet) return; S.sheet.pago = d.p==='viaje' ? 'viaje' : 'comision'; const v=S.sheet.pago==='viaje';
     const a=document.getElementById('u-com-box'), b=document.getElementById('u-viaje-box'); if(a) a.hidden=v; if(b) b.hidden=!v;
     sheetEl.querySelectorAll('[data-a="upago"]').forEach(x=>{ const on=x.dataset.p===S.sheet.pago; x.classList.toggle('on',on); x.setAttribute('aria-pressed',on); }); }
