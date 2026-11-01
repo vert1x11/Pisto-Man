@@ -174,6 +174,8 @@ button{font:inherit;color:inherit}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(78px + env(safe-area-inset-bottom,0px));z-index:60;background:var(--ink);color:var(--surface);padding:11px 16px;border-radius:12px;font-weight:650;max-width:calc(100% - 32px);box-shadow:var(--shadow);font-size:14px}
 @media (max-width:360px){ .stats,.split2{grid-template-columns:1fr} }
 @media (prefers-reduced-motion:reduce){ .pbtn:active{transform:none} }
+.seg3{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:4px}
+.seg3 .segb{font-size:13.5px;line-height:1.15;padding:4px 6px}
 .seg2{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:4px}
 .segb{appearance:none;border:0;background:none;border-radius:10px;min-height:42px;font-weight:700;color:var(--muted);cursor:pointer}
 .segb.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
@@ -228,7 +230,7 @@ const suma=(arr,f)=>arr.reduce((s,x)=>s+(Number(f(x))||0),0);
 const r2=n=>Math.round((Number(n)||0)*100)/100;
 
 /* ---------- estado ---------- */
-const S={tab:'inicio', hoy:hoyStr(), dia:hoyStr(), venta:{lineas:[], envio:0, nota:''}, modo:'cliente', propio:{lineas:[]},
+const S={tab:'inicio', hoy:hoyStr(), dia:hoyStr(), venta:{lineas:[], envio:0, nota:'', cobro:'rep', aMi:0}, modo:'cliente', propio:{lineas:[]},
   estado:'cargando', user:null, me:null, loc:null, ubic:null, cat:{}, promos:{}, ventas:[], entregas:[],
   cargado:{ubic:false,cat:false,promos:false,ventas:false}, loginErr:'', loginEmail:'', ocupado:false};
 try{ const t=localStorage.getItem('pm-rep-tab'); if(['inicio','vender','traigo','dias'].includes(t)) S.tab=t; }catch(e){}
@@ -264,12 +266,19 @@ function listaCom(l){
 const debeLinea=l=>{ const lc=listaCom(l); return (Number(l.cant)||0)*Math.max(0, lc.lista-lc.com); };
 const ganaLinea=l=>(Number(l.cant)||0)*(Number(l.precio)||0)-debeLinea(l);
 const envioSuyo=()=>!!(S.ubic&&S.ubic.envioSuyo);
-function calc(lineas, envio){
+function calc(lineas, envio, cobro, aMi){
   envio=Math.max(0, Number(envio)||0);
   const prodTot=suma(lineas,l=>(Number(l.cant)||0)*(Number(l.precio)||0)), total=prodTot+envio;
   const debe=suma(lineas,debeLinea)+(envioSuyo()?0:envio);
-  return {prodTot, envio, total, debe, gana:total-debe};
+  /* cómo pagó el cliente: todo en efectivo a ti, todo al jefe, o una parte transferida al jefe */
+  const tr = cobro==='dueno' ? total : cobro==='mixto' ? Math.min(total, Math.max(0, Number(aMi)||0)) : 0;
+  return {prodTot, envio, total, debe, gana:total-debe, tr, efectivo:total-tr, saldo:debe-tr};
 }
+/* lo que mueve tu cuenta con el jefe en cada venta, y lo que se le pagó directo a él */
+const transferDe=v=>v.aMi!=null ? (Number(v.aMi)||0) : (v.pagoRep==='viaje' && v.cobro==='dueno' ? (Number(v.total)||0) : 0);
+const saldoDe=v=>v.debe==null ? 0 : (Number(v.debe)||0)-(v.aMi!=null ? (Number(v.aMi)||0) : 0);
+const efectivoDe=v=>(Number(v.total)||0)-transferDe(v);
+const cuentaTxt=(d,J)=>Math.abs(d)<0.5?'Quedan a mano':d>0?'Le debes '+fmt$(d):J+' te debe '+fmt$(-d);
 function piezasDe(lineas){
   const o={}, add=(pid,q)=>{ if(q>0) o[pid]=(o[pid]||0)+q; };
   lineas.forEach(l=>{ const n=Math.round(Number(l.cant)||0); if(n<=0) return;
@@ -295,7 +304,7 @@ function stock(pid){
   pendientes().forEach(x=>{ const c=x.venta&&x.venta.cambios&&x.venta.cambios[S.loc]; if(c&&c[pid]) n+=Number(c[pid])||0; });
   return n;
 }
-const saldo=()=>(Number(S.ubic&&S.ubic.saldo)||0)+suma(pendientes(),x=>x.venta&&x.venta.debe);
+const saldo=()=>(Number(S.ubic&&S.ubic.saldo)||0)+suma(pendientes(),x=>x.venta?saldoDe(x.venta):0);
 const porHora=(a,b)=>String(b.hora).localeCompare(String(a.hora));
 const ventasDe=dia=>S.ventas.filter(x=>!x.borrada && x.venta && x.venta.dia===dia).map(x=>Object.assign({_sinSubir:x._sinSubir, _origen:x.origen}, x.venta)).sort(porHora);
 const entregasDe=dia=>S.entregas.filter(e=>e.dia===dia).sort(porHora);
@@ -336,15 +345,15 @@ function filaVenta(v){
     <div class="vrow-top"><span class="sub">${esc(horaDe(v.hora))}</span>${v.paraSi?'<span class="pill propio">Para ti</span>':''}${v._sinSubir?'<span class="pill warn">Sin subir</span>':''}${v._origen==='dueno'?`<span class="pill ok">La anotó ${esc(JEFE())}</span>`:''}<span class="money">${fmt$(v.total)}</span></div>
     <div class="vlines">${(v.lineas||[]).map(l=>`${l.cant}× ${esc(l.nombre)} <span class="sub">(${fmt$(l.precio)})</span>`).join(' · ')}${Number(v.envio)?` · Envío <span class="sub">(${fmt$(v.envio)})</span>`:''}</div>
     <div class="vmeta">${v.paraSi?`<span class="sub">Precio especial · se suma a lo que le debes: ${fmt$(v.debe)}</span>`
-      : v.pagoRep==='viaje'?`<span class="gn">Ganaste ${fmt$(v.gana)}</span><span class="sub">Viaje ${fmt$(v.viaje)}${Number(v.envio)?' · envío '+fmt$(v.envio):''} · ${v.cobro==='dueno'?'le pagaron a '+esc(JEFE()):'cobraste tú'}</span>`
-      : `<span class="gn">Ganaste ${fmt$(v.gana)}</span><span class="sub">Le debes ${fmt$(v.debe)}</span>`}</div>
+      : `<span class="gn">Ganaste ${fmt$(v.gana)}</span><span class="sub">${v.pagoRep==='viaje'?'Viaje '+fmt$(v.viaje)+(Number(v.envio)?' · envío '+fmt$(v.envio):'')+' · ':''}${pagoTxt(v)} · ${esc(cuentaTxt(saldoDe(v),JEFE()))}</span>`}</div>
     ${v.nota?`<div class="sub">${esc(v.nota)}</div>`:''}
   </div>`;
 }
+function pagoTxt(v){ const tr=transferDe(v), tot=Number(v.total)||0, J=esc(JEFE()); return tr>=tot&&tot>0 ? 'le pagaron todo a '+J : tr>0 ? 'cobraste '+fmt$(tot-tr)+' y le transfirieron '+fmt$(tr)+' a '+J : 'cobraste tú'; }
 function vInicio(){
   const todas=ventasDe(S.hoy), vs=todas.filter(v=>!v.paraSi), mias=todas.filter(v=>v.paraSi), sal=saldo(), J=esc(JEFE());
-  const gana=suma(vs,v=>v.gana), env=suma(vs,v=>v.envio), cob=suma(vs.filter(v=>v.cobro!=='dueno'),v=>v.total);
-  const debeVentas=suma(vs,v=>v.debe), debeMias=suma(mias,v=>v.debe), debeHoy=debeVentas+debeMias, dioHoy=suma(entregasDe(S.hoy).filter(e=>e.tipo!=='pago'),e=>e.monto), pagoHoy=suma(entregasDe(S.hoy).filter(e=>e.tipo==='pago'),e=>e.monto), antes=sal-debeHoy+dioHoy-pagoHoy;
+  const gana=suma(vs,v=>v.gana), env=suma(vs,v=>v.envio), cob=suma(vs,efectivoDe);
+  const debeVentas=suma(vs,saldoDe), debeMias=suma(mias,saldoDe), debeHoy=debeVentas+debeMias, dioHoy=suma(entregasDe(S.hoy).filter(e=>e.tipo!=='pago'),e=>e.monto), pagoHoy=suma(entregasDe(S.hoy).filter(e=>e.tipo==='pago'),e=>e.monto), antes=sal-debeHoy+dioHoy-pagoHoy;
   const ult=S.entregas.filter(e=>e.tipo!=='pago').sort(porHora)[0], viaje=porViaje();
   const ps=prodsActivos().filter(p=>stock(p.id)!==0 || p.enVenta!==false && !p.soloCaja);
   const chips=ps.map(p=>{ const n=stock(p.id); return `<span class="chip ${n<=0?'bad':''}"><b>${n}</b>${esc(nombreProd(p.id))}</span>`; }).join('');
@@ -356,7 +365,7 @@ function vInicio(){
     <span class="meta">${sal>=0?(viaje?'Lo que cobraste de productos y no le has dado, ya con tus viajes descontados.':'Es el dinero de tus ventas que todavía no le das.'):(viaje?'Tus viajes y envíos que todavía no te paga.':'Le diste más de lo que le debías.')}</span>
     ${viaje?'':`<div class="cuenta">
       <div><span>Te faltaba de antes</span><b>${fmt$(antes)}</b></div>
-      <div><span>+ De tus ventas de hoy</span><b>${fmt$(debeVentas)}</b></div>
+      <div><span>${debeVentas<0?'− ':'+ '}De tus ventas de hoy</span><b>${fmt$(Math.abs(debeVentas))}</b></div>
       ${debeMias?`<div><span>+ Tus botellas de hoy</span><b>${fmt$(debeMias)}</b></div>`:''}
       <div><span>− Le diste hoy</span><b>${fmt$(dioHoy)}</b></div>
       ${pagoHoy?`<div><span>+ Te pagó hoy</span><b>${fmt$(pagoHoy)}</b></div>`:''}
@@ -435,10 +444,20 @@ async function guardarPropio(){
   }catch(e){ toast('No se guardó: '+PM.mensajeError(e)); }
   finally{ S.ocupado=false; }
 }
+function amiTxt(){ const v=S.venta, c=calc(v.lineas, v.envio, v.cobro, v.aMi); if((Number(v.aMi)||0)>c.total) return '<span class="warnc">Es más que el total ('+fmt$(c.total)+').</span>'; return c.tr ? 'El resto, '+fmt$(c.efectivo)+', lo cobraste tú en efectivo.' : 'Escribe cuánto le transfirieron a '+esc(JEFE())+'.'; }
+function pagoHtml(){
+  const v=S.venta, c=v.cobro==='dueno'?'dueno':v.cobro==='mixto'?'mixto':'rep', J=esc(JEFE());
+  return `<div class="field"><span class="lbl">¿Cómo pagó el cliente?</span><div class="seg3" role="group" aria-label="Cómo pagó el cliente">
+      <button class="segb ${c==='rep'?'on':''}" data-a="cobro" data-c="rep" aria-pressed="${c==='rep'}">Todo a mí</button>
+      <button class="segb ${c==='dueno'?'on':''}" data-a="cobro" data-c="dueno" aria-pressed="${c==='dueno'}">Todo a ${J}</button>
+      <button class="segb ${c==='mixto'?'on':''}" data-a="cobro" data-c="mixto" aria-pressed="${c==='mixto'}">Una parte a ${J}</button></div>
+      ${c==='mixto'?`<span class="lbl">¿Cuánto le transfirieron a ${J}?</span><label class="tl-price"><span>$</span><input id="t-ami" data-f="ami" inputmode="decimal" value="${v.aMi?esc(v.aMi):''}" placeholder="0" aria-label="Cuánto le transfirieron a ${J}"></label><span class="sub" id="t-ami-txt">${amiTxt()}</span>`:''}
+      ${c!=='rep'?`<span class="sub">${J} va a revisar la transferencia en su banco.</span>`:''}</div>`;
+}
 function vVender(){
   if(S.modo==='propio' && prodsPropios().length) return vPropio();
   if(porViaje()) return `${modoHtml()}<section class="block"><h2 class="h2">Tus ventas</h2><span class="sub">Tus ventas las anota ${esc(JEFE())} desde su app, con tu viaje y tu envío. Las vas a ver en Inicio y en Mis días con lo que ganaste.</span></section><button class="btn block ghost" data-a="tab" data-t="dias">Ver mis días</button>`;
-  const v=S.venta, c=calc(v.lineas, v.envio), falt=faltantes(piezasDe(v.lineas)), J=esc(JEFE());
+  const v=S.venta, c=calc(v.lineas, v.envio, v.cobro, v.aMi), falt=faltantes(piezasDe(v.lineas)), J=esc(JEFE());
   const promos=promosActivas().map(k=>`<button class="pbtn promo" data-a="addk" data-id="${esc(k.id)}"><span class="pn">${esc(k.nombre)}</span><span class="q">${esc(compTxt(k))}</span><span class="gn">${comPromo(k)?'Ganas '+fmt$(comPromo(k)):'Sin comisión'}</span><span class="pr">${fmt$(k.precio)}</span></button>`).join('');
   const prods=prodsVenta().map(p=>{ const n=stock(p.id), cm=comDe(p.id);
     return `<button class="pbtn" data-a="addp" data-id="${esc(p.id)}"><span class="pn">${esc(p.nombre)}</span><span class="q">${esc(p.presentacion||'')}</span><span class="q ${n<=0?'bad':''}">${n<=0?'No traes':'Traes '+n}</span><span class="${cm?'gn':'q'}">${cm?'Ganas '+fmt$(cm):'Sin comisión'}</span><span class="pr">${fmt$(p.precio)}</span></button>`; }).join('');
@@ -466,10 +485,11 @@ function vVender(){
       <label class="tl-price"><span>$</span><input id="t-envio" data-f="envio" inputmode="decimal" value="${v.envio||''}" placeholder="0" aria-label="Envío cobrado"></label>
       <span class="sub">${esTarde()?'<span class="warnc">Ya pasan de las 10 de la noche: no olvides cobrar el envío.</span> ':'El envío se cobra después de las 10 de la noche. '}${envTxt}</span>
     </div>
+    ${pagoHtml()}
     <label class="field"><span class="lbl">Cliente o nota (opcional)</span><input id="t-nota" value="${esc(v.nota)}" placeholder="Ej. Juan, colonia Centro"></label>
-    <div class="total-row"><span class="lbl">Total a cobrar</span><span class="money" id="t-total">${fmt$(c.total)}</span></div>
+    <div class="total-row"><span class="lbl">Total que paga el cliente</span><span class="money" id="t-total">${fmt$(c.total)}</span></div>
     <div class="split2">
-      <div><span class="lbl">Le debes a ${J}</span><b id="t-debe">${fmt$(c.debe)}</b></div>
+      <div><span class="lbl" id="t-debe-l">${c.saldo<-0.5?J+' te debe':'Le debes a '+J}</span><b id="t-debe">${fmt$(Math.abs(c.saldo))}</b><span class="sub" id="t-ef">${c.tr?'Cobraste '+fmt$(c.efectivo)+' en efectivo':''}</span></div>
       <div><span class="lbl">Tu ganancia</span><b class="okc" id="t-gana">${fmt$(c.gana)}</b><span class="sub" id="t-env">${c.envio?(envioSuyo()?'Con '+fmt$(c.envio)+' de envío':'Sin el envío'):'Sin envío'}</span></div>
     </div>
     <div id="t-aviso">${avisoHtml(falt)}</div>
@@ -482,13 +502,14 @@ function vVender(){
   <section class="block"><div class="lbl">Productos sueltos</div><div class="pgrid">${prods||'<span class="sub">No hay productos.</span>'}</div></section>`;
 }
 function actualizar(){
-  const v=S.venta, c=calc(v.lineas, v.envio), falt=faltantes(piezasDe(v.lineas));
+  const v=S.venta, c=calc(v.lineas, v.envio, v.cobro, v.aMi), falt=faltantes(piezasDe(v.lineas));
   v.lineas.forEach((l,i)=>{
     const st=document.getElementById('st-'+i); if(st) st.textContent=fmt$((Number(l.cant)||0)*(Number(l.precio)||0));
     const gn=document.getElementById('gn-'+i); if(gn){ const g=ganaTxt(l); gn.className=g.cls; gn.textContent=g.txt; }
   });
   const set=(id,t)=>{ const el=document.getElementById(id); if(el) el.textContent=t; };
-  set('t-total',fmt$(c.total)); set('t-debe',fmt$(c.debe)); set('t-gana',fmt$(c.gana)); set('t-env', c.envio?(envioSuyo()?'Con '+fmt$(c.envio)+' de envío':'Sin el envío'):'Sin envío');
+  const J=JEFE(); set('t-total',fmt$(c.total)); set('t-debe',fmt$(Math.abs(c.saldo))); set('t-debe-l', c.saldo<-0.5?J+' te debe':'Le debes a '+J); set('t-ef', c.tr?'Cobraste '+fmt$(c.efectivo)+' en efectivo':'');
+  const at=document.getElementById('t-ami-txt'); if(at) at.innerHTML=amiTxt(); set('t-gana',fmt$(c.gana)); set('t-env', c.envio?(envioSuyo()?'Con '+fmt$(c.envio)+' de envío':'Sin el envío'):'Sin envío');
   const av=document.getElementById('t-aviso'); if(av) av.innerHTML=avisoHtml(falt);
   set('t-guardar', falt.length?'Guardar aunque falte':'Guardar venta');
 }
@@ -504,18 +525,19 @@ async function guardarVenta(){
   const v=S.venta;
   const lineas=v.lineas.filter(l=>(Number(l.cant)||0)>0).map(l=>({t:l.t, id:l.id, cant:Math.round(Number(l.cant)), precio:Number(l.precio)||0, nombre:nombreLinea(l)}));
   if(!lineas.length){ toast('Agrega al menos un producto o promo.'); return; }
-  const salen=piezasDe(lineas), regalos=regalosDe(lineas), piezas=restar(salen, regalos), c=calc(lineas, v.envio), aj=ajenoDe(lineas);
+  const salen=piezasDe(lineas), regalos=regalosDe(lineas), piezas=restar(salen, regalos), c=calc(lineas, v.envio, v.cobro, v.aMi), aj=ajenoDe(lineas);
   lineas.forEach(l=>{ const lc=listaCom(l); l.lista=lc.lista; l.com=lc.com; l.ingreso=r2(l.cant*Math.max(0,lc.lista-lc.com)-ajenoLinea(l)); });
   const cambios={[S.loc]:{}}; for(const pid in salen) cambios[S.loc][pid]=-salen[pid];
   const ahora=new Date(), id=uid('v'), dia=hoyStr(ahora);
   const venta={id, dia, hora:ahora.toISOString(), vend:S.loc, vendNombre:(S.ubic&&S.ubic.nombre)||'', modo:'menudeo', lineas, total:c.total, envio:c.envio, envioTuyo:envioSuyo()?0:c.envio,
-    ajeno:aj.tot, ajenoDetalle:aj.det, piezas, regalos, cambios, nota:String(v.nota||'').trim(), debe:r2(c.debe), gana:r2(c.gana), envioSuyo:envioSuyo()};
+    ajeno:aj.tot, ajenoDetalle:aj.det, piezas, regalos, cambios, nota:String(v.nota||'').trim(), debe:r2(c.debe), gana:r2(c.gana), envioSuyo:envioSuyo(), cobro:v.cobro==='dueno'||v.cobro==='mixto'?v.cobro:'rep', aMi:r2(c.tr)};
+  if(c.tr) venta.aMiDice=true;
   S.ocupado=true;
   try{
     await PM.db.doc('repVentas/'+id).set({id, rep:S.loc, dia, hora:venta.hora, venta, absorbida:false, borrada:false, origen:'repartidor'});
-    S.venta={lineas:[], envio:0, nota:''};
+    S.venta={lineas:[], envio:0, nota:'', cobro:'rep', aMi:0};
     irTab('inicio');
-    toast('Venta guardada · Ganaste '+fmt$(c.gana)+' · Le debes '+fmt$(c.debe)+' más'+(navigator.onLine?'':' · se sube cuando haya señal'));
+    toast('Venta guardada · Ganaste '+fmt$(c.gana)+' · '+(Math.abs(c.saldo)<0.5?'quedan a mano':c.saldo>0?'le debes '+fmt$(c.saldo)+' más':JEFE()+' te debe '+fmt$(-c.saldo))+(navigator.onLine?'':' · se sube cuando haya señal'));
   }catch(e){ toast('No se guardó: '+PM.mensajeError(e)); }
   finally{ S.ocupado=false; }
 }
@@ -535,7 +557,7 @@ function vTraigo(){
 }
 function vDias(){
   const d=S.dia, vs=ventasDe(d), es=entregasDe(d), J=esc(JEFE()), cli=vs.filter(v=>!v.paraSi), mias=vs.filter(v=>v.paraSi);
-  const cob=suma(cli.filter(v=>v.cobro!=='dueno'),v=>v.total), gana=suma(cli,v=>v.gana), env=suma(cli,v=>v.envio), debe=suma(vs,v=>v.debe), ent=suma(es.filter(e=>e.tipo!=='pago'),e=>e.monto), pag=suma(es.filter(e=>e.tipo==='pago'),e=>e.monto), propio=suma(mias,v=>v.debe);
+  const cob=suma(cli,efectivoDe), gana=suma(cli,v=>v.gana), env=suma(cli,v=>v.envio), debe=suma(vs,saldoDe), ent=suma(es.filter(e=>e.tipo!=='pago'),e=>e.monto), pag=suma(es.filter(e=>e.tipo==='pago'),e=>e.monto), propio=suma(mias,v=>v.debe);
   const entHtml = es.length ? `<section class="block"><div class="lbl">Dinero con ${J}</div><div class="list">${es.map(e=>`<div class="vrow"><div class="vrow-top"><span class="pn">${e.tipo==='pago'?'Te pagó':'Le diste'}</span><span class="sub">${esc(horaDe(e.hora))}</span><span class="money">${fmt$(e.monto)}</span></div>${e.nota?`<div class="sub">${esc(e.nota)}</div>`:''}</div>`).join('')}</div></section>` : '';
   return `
   <section class="block">
@@ -605,7 +627,8 @@ const A={
   mas:d=>{ const l=S.venta.lineas[+d.i]; if(l){ l.cant=(Number(l.cant)||0)+1; render(); } },
   menos:d=>{ const l=S.venta.lineas[+d.i]; if(l){ l.cant=Math.max(0,(Number(l.cant)||0)-1); if(l.cant===0) S.venta.lineas.splice(+d.i,1); render(); } },
   quitar:d=>{ S.venta.lineas.splice(+d.i,1); render(); },
-  limpiar:()=>{ S.venta={lineas:[], envio:0, nota:''}; render(); },
+  limpiar:()=>{ S.venta={lineas:[], envio:0, nota:'', cobro:'rep', aMi:0}; render(); },
+  cobro:d=>{ S.venta.cobro = d.c==='dueno' ? 'dueno' : d.c==='mixto' ? 'mixto' : 'rep'; render(); if(S.venta.cobro==='mixto'){ const el=document.getElementById('t-ami'); if(el) el.focus(); } },
   guardar:()=>guardarVenta(),
   modo:d=>{ S.modo=d.m==='propio'?'propio':'cliente'; render(); window.scrollTo({top:0}); },
   propio:()=>{ S.modo='propio'; irTab('vender'); },
@@ -634,6 +657,7 @@ view.addEventListener('input', e=>{
     if(f==='cant') l.cant=Math.max(0, parseInt(t.value,10)||0); else l.precio=num(t.value);
     actualizar();
   } else if(f==='envio'){ S.venta.envio=Math.max(0, num(t.value)); actualizar(); }
+  else if(f==='ami'){ S.venta.aMi=Math.max(0, num(t.value)); actualizar(); }
   else if(t.id==='t-nota'){ S.venta.nota=t.value; }
 });
 view.addEventListener('change', e=>{ const t=e.target; if(t.id==='d-dia' && t.value){ S.dia = t.value>S.hoy ? S.hoy : t.value; render(); } });
